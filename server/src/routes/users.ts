@@ -76,6 +76,23 @@ export async function usersRoutes(app: FastifyInstance) {
     return { available: rows.length === 0 };
   });
 
+  // Register BEFORE the /:id route so "by-username" isn't interpreted as an id.
+  app.get(
+    "/api/users/by-username/:username",
+    { preHandler: attachSession },
+    async (req, reply) => {
+      const usernameParam = (req.params as { username: string }).username;
+      const rows = await db
+        .select()
+        .from(user)
+        .where(eq(user.username, usernameParam))
+        .limit(1);
+      const found = rows[0];
+      if (!found) return reply.code(404).send({ error: "not found" });
+      return publicUser(found);
+    }
+  );
+
   app.get("/api/users/:id", { preHandler: attachSession }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const rows = await db.select().from(user).where(eq(user.id, id)).limit(1);
