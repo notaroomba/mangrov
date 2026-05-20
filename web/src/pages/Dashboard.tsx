@@ -22,7 +22,7 @@ import {
   fetchSavedPosts,
 } from "../utils/firebaseHelpers";
 import { INTERESTS } from "../utils/constants";
-import { getFlagEmoji } from "../utils/helpers";
+import { getFlagEmoji, toDate } from "../utils/helpers";
 
 interface DashboardStats {
   totalTrades: number;
@@ -69,16 +69,15 @@ export default function Dashboard() {
         setUserTrades(tradesResult);
         setSavedPosts(savedPostsResult);
 
+        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
         setStats({
           totalTrades: tradesResult.length,
           savedPosts: savedPostsResult.length,
           unreadMessages: totalUnread,
-          recentActivity: tradesResult.filter(
-            (trade) =>
-              trade.timestamp?.toDate &&
-              new Date(trade.timestamp.toDate()) >
-                new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-          ).length,
+          recentActivity: tradesResult.filter((trade) => {
+            const d = toDate(trade.timestamp);
+            return d ? d.getTime() > weekAgo : false;
+          }).length,
         });
       } catch (error) {
         console.error("Error loading dashboard data:", error);
@@ -158,7 +157,8 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h1 className="text-2xl sm:text-4xl font-bold">
-                {getGreeting()}, {userData?.name || user?.displayName || "User"}
+                {getGreeting()},{" "}
+                {userData?.displayName || userData?.name || user?.displayName || "User"}
               </h1>
               <p className="text-neutral-400 mt-1 text-sm sm:text-base">
                 {userData?.country && (
@@ -463,9 +463,10 @@ function TradeCard({ trade, onClick }: { trade: any; onClick?: () => void }) {
         <div className="flex-1 min-w-0">
           <h4 className="font-semibold text-white truncate">{trade.title}</h4>
           <p className="text-xs text-neutral-400">
-            {trade.timestamp?.toDate?.()
-              ? new Date(trade.timestamp.toDate()).toLocaleDateString()
-              : "Recently"}
+            {(() => {
+              const d = toDate(trade.timestamp);
+              return d ? d.toLocaleDateString() : "Recently";
+            })()}
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -562,9 +563,10 @@ function SavedPostCard({ post, onClick }: { post: any; onClick?: () => void }) {
         <div className="flex-1 min-w-0">
           <h4 className="font-semibold text-white truncate">{post.title}</h4>
           <p className="text-xs text-neutral-400">
-            {post.timestamp?.toDate?.()
-              ? new Date(post.timestamp.toDate()).toLocaleDateString()
-              : "Recently"}
+            {(() => {
+              const d = toDate(post.timestamp);
+              return d ? d.toLocaleDateString() : "Recently";
+            })()}
           </p>
         </div>
         <Bookmark className="w-4 h-4 text-primary fill-current" />

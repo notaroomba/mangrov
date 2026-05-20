@@ -57,6 +57,30 @@ export const isValidUsername = (username: string): boolean => {
 };
 
 /**
+ * Convert a timestamp value into a Date.
+ * Tolerates: ISO strings (Postgres), epoch numbers, native Dates, and the
+ * legacy Firestore Timestamp { toDate(): Date } shape that's still embedded
+ * in some component code paths. Returns null when the input can't be parsed.
+ */
+export const toDate = (value: any): Date | null => {
+  if (value == null) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "object" && typeof value.toDate === "function") {
+    try {
+      const d = value.toDate();
+      return d instanceof Date ? d : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+};
+
+/**
  * Formats a date to a readable string
  * @param date - The date to format
  * @returns Formatted date string

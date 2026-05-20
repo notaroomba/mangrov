@@ -12,6 +12,7 @@ import useMediaQuery from "../hooks/useMediaQuery";
 import { api, uploadFile } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import { fetchUserData } from "../utils/firebaseHelpers";
+import { toDate } from "../utils/helpers";
 import { useAuth } from "../hooks/useAuth";
 import { useUnreadMessages } from "../hooks/useUnreadMessages";
 import { useParams, useNavigate } from "react-router";
@@ -177,36 +178,32 @@ const DesktopChatWindow = memo(
     };
 
     const formatTime = (timestamp: any) => {
-      if (!timestamp) return "";
+      const date = toDate(timestamp);
+      if (!date) return "";
 
-      try {
-        const date = timestamp.toDate();
-        const now = new Date();
-        const diffInMs = now.getTime() - date.getTime();
-        const diffInMinutes = diffInMs / (1000 * 60);
-        const diffInHours = diffInMinutes / 60;
-        const diffInDays = diffInHours / 24;
+      const now = new Date();
+      const diffInMs = now.getTime() - date.getTime();
+      const diffInMinutes = diffInMs / (1000 * 60);
+      const diffInHours = diffInMinutes / 60;
+      const diffInDays = diffInHours / 24;
 
-        if (diffInMinutes < 1) return "now";
-        if (diffInMinutes < 60) {
-          const minutes = Math.floor(diffInMinutes);
-          return `${minutes}m`;
-        }
-        if (diffInHours < 24) {
-          const hours = Math.floor(diffInHours);
-          return `${hours}h`;
-        }
-        if (diffInDays < 7) {
-          const days = Math.floor(diffInDays);
-          return `${days}d`;
-        }
-        return date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        });
-      } catch (error) {
-        return "";
+      if (diffInMinutes < 1) return "now";
+      if (diffInMinutes < 60) {
+        const minutes = Math.floor(diffInMinutes);
+        return `${minutes}m`;
       }
+      if (diffInHours < 24) {
+        const hours = Math.floor(diffInHours);
+        return `${hours}h`;
+      }
+      if (diffInDays < 7) {
+        const days = Math.floor(diffInDays);
+        return `${days}d`;
+      }
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
     };
 
     if (!selectedChat) {
@@ -562,36 +559,32 @@ const MobileChatWindow = memo(
     };
 
     const formatTime = (timestamp: any) => {
-      if (!timestamp) return "";
+      const date = toDate(timestamp);
+      if (!date) return "";
 
-      try {
-        const date = timestamp.toDate();
-        const now = new Date();
-        const diffInMs = now.getTime() - date.getTime();
-        const diffInMinutes = diffInMs / (1000 * 60);
-        const diffInHours = diffInMinutes / 60;
-        const diffInDays = diffInHours / 24;
+      const now = new Date();
+      const diffInMs = now.getTime() - date.getTime();
+      const diffInMinutes = diffInMs / (1000 * 60);
+      const diffInHours = diffInMinutes / 60;
+      const diffInDays = diffInHours / 24;
 
-        if (diffInMinutes < 1) return "now";
-        if (diffInMinutes < 60) {
-          const minutes = Math.floor(diffInMinutes);
-          return `${minutes}m`;
-        }
-        if (diffInHours < 24) {
-          const hours = Math.floor(diffInHours);
-          return `${hours}h`;
-        }
-        if (diffInDays < 7) {
-          const days = Math.floor(diffInDays);
-          return `${days}d`;
-        }
-        return date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        });
-      } catch (error) {
-        return "";
+      if (diffInMinutes < 1) return "now";
+      if (diffInMinutes < 60) {
+        const minutes = Math.floor(diffInMinutes);
+        return `${minutes}m`;
       }
+      if (diffInHours < 24) {
+        const hours = Math.floor(diffInHours);
+        return `${hours}h`;
+      }
+      if (diffInDays < 7) {
+        const days = Math.floor(diffInDays);
+        return `${days}d`;
+      }
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
     };
 
     return (
@@ -1375,36 +1368,32 @@ export default function Messages() {
 
   // Format time helper
   const formatTime = useCallback((timestamp: any) => {
-    if (!timestamp) return "";
+    const date = toDate(timestamp);
+    if (!date) return "";
 
-    try {
-      const date = timestamp.toDate();
-      const now = new Date();
-      const diffInMs = now.getTime() - date.getTime();
-      const diffInMinutes = diffInMs / (1000 * 60);
-      const diffInHours = diffInMinutes / 60;
-      const diffInDays = diffInHours / 24;
+    const now = new Date();
+    const diffInMs = now.getTime() - date.getTime();
+    const diffInMinutes = diffInMs / (1000 * 60);
+    const diffInHours = diffInMinutes / 60;
+    const diffInDays = diffInHours / 24;
 
-      if (diffInMinutes < 1) return "now";
-      if (diffInMinutes < 60) {
-        const minutes = Math.floor(diffInMinutes);
-        return `${minutes}m`;
-      }
-      if (diffInHours < 24) {
-        const hours = Math.floor(diffInHours);
-        return `${hours}h`;
-      }
-      if (diffInDays < 7) {
-        const days = Math.floor(diffInDays);
-        return `${days}d`;
-      }
-      return date.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      });
-    } catch (error) {
-      return "";
+    if (diffInMinutes < 1) return "now";
+    if (diffInMinutes < 60) {
+      const minutes = Math.floor(diffInMinutes);
+      return `${minutes}m`;
     }
+    if (diffInHours < 24) {
+      const hours = Math.floor(diffInHours);
+      return `${hours}h`;
+    }
+    if (diffInDays < 7) {
+      const days = Math.floor(diffInDays);
+      return `${days}d`;
+    }
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
   }, []);
 
   const handleBackToChats = useCallback(() => {
