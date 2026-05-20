@@ -8,7 +8,7 @@ import {
   Eye,
   Activity,
 } from "lucide-react";
-import { SiInstagram, SiYoutube } from "@icons-pack/react-simple-icons";
+import { SiInstagram } from "@icons-pack/react-simple-icons";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "../hooks/useAuth";
 import { useUnreadMessages } from "../hooks/useUnreadMessages";
@@ -343,9 +343,6 @@ export default function Dashboard() {
                 </Link>
                 <Link to="https://instagram.com/_mangrov_" target="_blank">
                   <SiInstagram className="text-white w-6 h-6 sm:w-8 sm:h-8 hover:text-primary transition-colors" />
-                </Link>
-                <Link to="https://youtube.com" target="_blank">
-                  <SiYoutube className="text-white w-6 h-6 sm:w-8 sm:h-8 hover:text-primary transition-colors" />
                 </Link>
               </div>
             </div>
