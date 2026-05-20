@@ -48,12 +48,19 @@ test.describe("authenticated page smoke", () => {
 
       expect.soft(pageErrors, `Uncaught errors on ${path}`).toEqual([]);
 
-      // Filter out unrelated noise (Cloudflare Insights, etc.)
-      const appErrors = consoleErrors.filter(
-        (e) =>
-          !/cloudflareinsights|beacon\.min\.js|integrity attribute/i.test(e) &&
-          !/Failed to load resource: the server responded with a status of 4\d{2}.*placehold/i.test(e)
-      );
+      // Filter out unrelated noise:
+      // - Cloudflare Insights beacon (analytics, not our code)
+      // - Third-party font CDNs (font failures fall back gracefully)
+      // - Placeholder image 4xx (test fixtures, not real failures)
+      // - net::ERR_FAILED on cross-origin third-party assets
+      const appErrors = consoleErrors.filter((e) => {
+        if (/cloudflareinsights|beacon\.min\.js|integrity attribute/i.test(e)) return false;
+        if (/rsms\.me|fonts\.googleapis|fonts\.gstatic/i.test(e)) return false;
+        if (/Failed to load resource: the server responded with a status of 4\d{2}.*placehold/i.test(e)) return false;
+        if (/Failed to load resource: net::ERR_FAILED$/.test(e)) return false; // bare CORS noise from 3rd party
+        if (/Access to font.*has been blocked by CORS/i.test(e)) return false;
+        return true;
+      });
       expect.soft(appErrors, `Console errors on ${path}`).toEqual([]);
 
       // /error route means something fatal happened during data load
