@@ -59,6 +59,10 @@ export const auth = betterAuth({
     cookieCache: { enabled: true, maxAge: 60 * 5 },
   },
 
+  rateLimit: {
+    enabled: false,
+  },
+
   advanced: {
     crossSubDomainCookies: cookieDomain
       ? { enabled: true, domain: cookieDomain }

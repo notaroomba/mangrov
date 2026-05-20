@@ -160,6 +160,10 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     emitToChat(chat.id, "message:new", msg);
     const otherUserId = chat.userA === req.userId ? chat.userB : chat.userA;
+    // Belt and suspenders: also push message:new to both users' personal rooms so clients
+    // that haven't joined the chat:<id> room (e.g. inbox views) still receive the event.
+    emitToUser(otherUserId, "message:new", msg);
+    emitToUser(req.userId!, "message:new", msg);
     emitToUser(otherUserId, "chat:bump", { chatId: chat.id, lastMessage: summary, lastMessageAt: msg!.createdAt });
 
     return msg;

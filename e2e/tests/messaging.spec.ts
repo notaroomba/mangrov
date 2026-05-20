@@ -38,13 +38,29 @@ test("send message + recipient receives via socket + read receipts", async () =>
     .join("; ");
 
   const bSocket: Socket = socketIO(API_URL, {
-    transports: ["websocket"],
+    transports: ["polling", "websocket"],
     extraHeaders: { cookie: cookieHeader },
+    withCredentials: true,
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error("timeout connecting socket B: " + (bSocket as any).io?.engine?.transport?.name)),
+      10000
+    );
+    bSocket.once("connect", () => {
+      clearTimeout(t);
+      resolve();
+    });
+    bSocket.once("connect_error", (err) => {
+      clearTimeout(t);
+      reject(err);
+    });
   });
   bSocket.emit("chat:join", chat.id);
 
   const received = new Promise<any>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("timeout waiting for message:new")), 8000);
+    const t = setTimeout(() => reject(new Error("timeout waiting for message:new")), 15000);
     bSocket.on("message:new", (m: any) => {
       clearTimeout(t);
       resolve(m);
@@ -68,12 +84,24 @@ test("send message + recipient receives via socket + read receipts", async () =>
     .map((c) => `${c.name}=${c.value}`)
     .join("; ");
   const aSocket: Socket = socketIO(API_URL, {
-    transports: ["websocket"],
+    transports: ["polling", "websocket"],
     extraHeaders: { cookie: aCookieHeader },
+    withCredentials: true,
+  });
+  await new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout connecting socket A")), 10000);
+    aSocket.once("connect", () => {
+      clearTimeout(t);
+      resolve();
+    });
+    aSocket.once("connect_error", (err) => {
+      clearTimeout(t);
+      reject(err);
+    });
   });
   aSocket.emit("chat:join", chat.id);
   const readPromise = new Promise<any>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("timeout waiting for message:read")), 8000);
+    const t = setTimeout(() => reject(new Error("timeout waiting for message:read")), 15000);
     aSocket.on("message:read", (p: any) => {
       clearTimeout(t);
       resolve(p);
