@@ -192,7 +192,15 @@ export async function chatsRoutes(app: FastifyInstance) {
         )
         .returning({ id: messages.id });
       if (updated.length > 0) {
-        emitToChat(chatId, "message:read", { chatId, readerId: req.userId, ids: updated.map((u) => u.id), at: now });
+        const payload = {
+          chatId,
+          readerId: req.userId,
+          ids: updated.map((u) => u.id),
+          at: now,
+        };
+        emitToChat(chatId, "message:read", payload);
+        emitToUser(c.userA, "message:read", payload);
+        emitToUser(c.userB, "message:read", payload);
       }
       return { ok: true, count: updated.length };
     }
