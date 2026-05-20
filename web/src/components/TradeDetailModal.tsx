@@ -9,8 +9,7 @@ import {
   ArrowLeftRight,
   Loader2,
 } from "lucide-react";
-import { doc, updateDoc, deleteDoc } from "firebase/firestore";
-import { db } from "../utils/firebase";
+import { api } from "../lib/api";
 import { useAuth } from "../hooks/useAuth";
 
 interface Trade {
@@ -69,7 +68,7 @@ export default function TradeDetailModal({
 
     try {
       setSaving(true);
-      await updateDoc(doc(db, "trades", trade.id), {
+      await api.patch(`/api/trades/${trade.id}`, {
         title: editData.title,
         description: editData.description,
         quantity: editData.quantity,
@@ -98,7 +97,7 @@ export default function TradeDetailModal({
 
     if (window.confirm("Are you sure you want to delete this trade?")) {
       try {
-        await deleteDoc(doc(db, "trades", trade.id));
+        await api.delete(`/api/trades/${trade.id}`);
         onClose();
       } catch (error) {
         console.error("Error deleting trade:", error);

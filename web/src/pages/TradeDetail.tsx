@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../utils/firebase";
+import { api } from "../lib/api";
 import TradeDetailModal from "../components/TradeDetailModal";
 
 export default function TradeDetail() {
@@ -14,10 +13,14 @@ export default function TradeDetail() {
     if (!tradeId) return;
     const fetchTrade = async () => {
       try {
-        const tradeDoc = await getDoc(doc(db, "trades", tradeId));
-        if (tradeDoc.exists()) {
-          setTrade({ id: tradeDoc.id, ...tradeDoc.data() });
-        }
+        const row = await api.get<any>(`/api/trades/${tradeId}`);
+        setTrade({
+          ...row,
+          uid: row.userId,
+          niche: row.niche ? [row.niche] : [],
+        });
+      } catch (err) {
+        console.error("Failed to load trade:", err);
       } finally {
         setLoading(false);
       }
@@ -25,7 +28,6 @@ export default function TradeDetail() {
     fetchTrade();
   }, [tradeId]);
 
-  // Show nothing until loaded
   if (loading) return null;
 
   return (

@@ -7,17 +7,14 @@ import {
   UploadCloud,
   User as UserIcon,
 } from "lucide-react";
-import { doc, setDoc } from "firebase/firestore";
-import { getAuth, updateProfile } from "firebase/auth";
-import { db } from "../utils/firebase";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { storage } from "../utils/firebase";
+import { api, uploadFile } from "../lib/api";
 import countryList from "react-select-country-list";
 import Select, { components, type StylesConfig } from "react-select";
 import { LANGUAGES, INTERESTS } from "../utils/constants";
 import GreenSpinner from "./GreenSpinner";
 import { isValidUsername } from "../utils/helpers";
 import { checkUsernameExists } from "../utils/firebaseHelpers";
+import { useAuth } from "../hooks/useAuth";
 
 const primaryBtn =
   "bg-primary text-primary-foreground hover:bg-primary/80 cursor-pointer transition-all duration-200 active:scale-95 uppercase tracking-widest font-bold disabled:opacity-40 disabled:cursor-not-allowed rounded-md";
@@ -86,6 +83,8 @@ export default function EditProfileModal({
   const [avatar, setAvatar] = useState(initialData?.avatar || "");
   const [errors, setErrors] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const { user, refresh } = useAuth();
 
   const handleSubmit = async () => {
     if (!displayName.trim()) return setErrors("Name is required");
@@ -98,13 +97,13 @@ export default function EditProfileModal({
       );
 
     setLoading(true);
+    if (!user) {
+      setErrors("You must be logged in.");
+      setLoading(false);
+      return;
+    }
 
-    const auth = getAuth();
-    const currentUser = auth.currentUser;
-    if (!currentUser) return setErrors("You must be logged in.");
-
-    // Check if username already exists (excluding current user)
-    const usernameExists = await checkUsernameExists(username, currentUser.uid);
+    const usernameExists = await checkUsernameExists(username, user.uid);
     if (usernameExists) {
       setErrors("Username already exists. Please choose a different one.");
       setLoading(false);
@@ -112,27 +111,31 @@ export default function EditProfileModal({
     }
 
     let photoURL = avatar;
-
-    if (avatar && avatar.startsWith("data:")) {
-      const blob = await fetch(avatar).then((res) => res.blob());
-      const avatarRef = ref(storage, `avatars/${currentUser.uid}.jpg`);
-      await uploadBytes(avatarRef, blob);
-      photoURL = await getDownloadURL(avatarRef);
+    if (pendingFile) {
+      const { publicUrl } = await uploadFile(pendingFile, "avatar");
+      photoURL = publicUrl;
     }
 
-    const data = {
-      displayName,
+    const payload = {
+      name: displayName,
       username,
       avatar: photoURL,
-      country: country?.value || initialData.country,
-      language: language?.value || initialData.language,
+      country: country?.value || initialData.country || null,
+      language: language?.value || initialData.language || null,
       interests: Array.from(selected),
     };
 
-    await setDoc(doc(db, "users", currentUser.uid), data, { merge: true });
-    await updateProfile(currentUser, { displayName, photoURL });
+    try {
+      await api.patch("/api/users/me", payload);
+      setData({ ...payload, displayName });
+      await refresh();
+    } catch (err) {
+      console.error(err);
+      setErrors("Failed to update profile. Please try again.");
+      setLoading(false);
+      return;
+    }
 
-    setData(data);
     setLoading(false);
     onClose();
   };
@@ -140,6 +143,7 @@ export default function EditProfileModal({
   const handleImageUpload = (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setPendingFile(file);
     const reader = new FileReader();
     reader.onloadend = () => setAvatar(reader.result as string);
     reader.readAsDataURL(file);

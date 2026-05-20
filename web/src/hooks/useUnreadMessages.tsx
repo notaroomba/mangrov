@@ -5,8 +5,8 @@ import React, {
   useEffect,
   useMemo,
 } from "react";
-import { onSnapshot, collection, query, where } from "firebase/firestore";
-import { db } from "../utils/firebase";
+import { api } from "../lib/api";
+import { getSocket } from "../lib/socket";
 import { useAuth } from "./useAuth";
 
 export type UnreadMessage = {
@@ -39,67 +39,49 @@ export const UnreadMessagesProvider = ({
   const { user } = useAuth();
   const [unreadMessages, setUnreadMessages] = useState<UnreadMessage[]>([]);
 
+  const refreshFromServer = async () => {
+    if (!user) {
+      setUnreadMessages([]);
+      return;
+    }
+    try {
+      const chats = await api.get<any[]>(`/api/chats`);
+      const next: UnreadMessage[] = chats
+        .filter((c) => (c.unreadCount ?? 0) > 0)
+        .map((c) => ({
+          chatId: c.id,
+          count: c.unreadCount ?? 0,
+          lastMessageTime: c.lastMessageAt ? new Date(c.lastMessageAt) : new Date(),
+          lastMessage: c.lastMessage ?? "",
+          otherUserId: c.partner?.id ?? "",
+          otherUserName: c.partner?.name ?? c.partner?.username ?? "Unknown User",
+        }));
+      setUnreadMessages(next);
+    } catch (err) {
+      console.error("Failed to fetch unread counts:", err);
+    }
+  };
+
   useEffect(() => {
     if (!user) {
       setUnreadMessages([]);
       return;
     }
-
-    // Listen to all unread messages and filter them properly
-    const messagesQuery = query(
-      collection(db, "messages"),
-      where("read", "==", false)
-    );
-
-    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      const unreadMap = new Map<string, UnreadMessage>();
-
-      snapshot.docs.forEach((doc) => {
-        const messageData = doc.data();
-
-        // Skip system messages
-        if (messageData.isSystemMessage) {
-          return;
-        }
-
-        // Skip messages sent by the current user
-        if (messageData.senderId === user.uid) {
-          return;
-        }
-
-        // Skip messages that don't have a chatId
-        if (!messageData.chatId) {
-          return;
-        }
-
-        const chatId = messageData.chatId;
-
-        if (!unreadMap.has(chatId)) {
-          unreadMap.set(chatId, {
-            chatId,
-            count: 0,
-            lastMessageTime: messageData.timestamp?.toDate() || new Date(),
-            lastMessage: messageData.text || "",
-            otherUserId: messageData.senderId,
-            otherUserName: messageData.senderName || "Unknown User",
-          });
-        }
-
-        const existing = unreadMap.get(chatId)!;
-        existing.count += 1;
-
-        // Update with the most recent message
-        if (messageData.timestamp?.toDate() > existing.lastMessageTime) {
-          existing.lastMessageTime = messageData.timestamp.toDate();
-          existing.lastMessage = messageData.text || "";
-        }
-      });
-
-      setUnreadMessages(Array.from(unreadMap.values()));
-    });
-
-    return () => unsubscribe();
-  }, [user]);
+    refreshFromServer();
+    const socket = getSocket();
+    const onNew = () => refreshFromServer();
+    const onRead = () => refreshFromServer();
+    const onBump = () => refreshFromServer();
+    socket.on("message:new", onNew);
+    socket.on("message:read", onRead);
+    socket.on("chat:bump", onBump);
+    return () => {
+      socket.off("message:new", onNew);
+      socket.off("message:read", onRead);
+      socket.off("chat:bump", onBump);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
 
   const markAsRead = (chatId: string) => {
     setUnreadMessages((prev) => prev.filter((msg) => msg.chatId !== chatId));

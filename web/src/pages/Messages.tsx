@@ -9,21 +9,9 @@ import {
   User as UserIcon,
 } from "lucide-react";
 import useMediaQuery from "../hooks/useMediaQuery";
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  addDoc,
-  updateDoc,
-  doc,
-  serverTimestamp,
-  getDocs,
-  getDoc,
-} from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "../utils/firebase";
+import { api, uploadFile } from "../lib/api";
+import { getSocket } from "../lib/socket";
+import { fetchUserData } from "../utils/firebaseHelpers";
 import { useAuth } from "../hooks/useAuth";
 import { useUnreadMessages } from "../hooks/useUnreadMessages";
 import { useParams, useNavigate } from "react-router";
@@ -125,10 +113,10 @@ const DesktopChatWindow = memo(
               const messageId = entry.target.getAttribute("data-message-id");
               const isSystemMessage =
                 entry.target.getAttribute("data-system-message") === "true";
-              if (messageId && !isSystemMessage) {
-                updateDoc(doc(db, "messages", messageId), {
-                  read: true,
-                }).catch(console.error);
+              if (messageId && !isSystemMessage && selectedChat) {
+                api
+                  .post(`/api/chats/${selectedChat.id}/read`)
+                  .catch(console.error);
               }
             }
           });
@@ -159,29 +147,11 @@ const DesktopChatWindow = memo(
       if (!selectedChat || !user || (!text.trim() && !imageUrl)) return;
 
       try {
-        const messageData: any = {
+        await api.post("/api/messages", {
           chatId: selectedChat.id,
-          text: text.trim(),
-          senderId: user.uid,
-          receiverId: selectedChat.participants.find((id) => id !== user.uid),
-          timestamp: serverTimestamp(),
-          read: false,
-        };
-
-        if (imageUrl) {
-          messageData.imageUrl = imageUrl;
-        }
-
-        await addDoc(collection(db, "messages"), messageData);
-
-        await updateDoc(doc(db, "chats", selectedChat.id), {
-          lastMessage: {
-            text: text.trim() || "Image",
-            senderId: user.uid,
-          },
-          lastMessageTime: serverTimestamp(),
+          text: text.trim() || undefined,
+          imageUrl,
         });
-
         setNewMessage("");
       } catch (error) {
         console.error("Error sending message:", error);
@@ -192,13 +162,8 @@ const DesktopChatWindow = memo(
       if (!selectedChat || !user) return;
 
       try {
-        const storageRef = ref(
-          storage,
-          `chat-images/${selectedChat.id}/${Date.now()}-${file.name}`
-        );
-        const snapshot = await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadURL(snapshot.ref);
-        await sendMessage("", downloadURL);
+        const { publicUrl } = await uploadFile(file, "message");
+        await sendMessage("", publicUrl);
       } catch (error) {
         console.error("Error uploading image:", error);
       }
@@ -533,10 +498,10 @@ const MobileChatWindow = memo(
               const messageId = entry.target.getAttribute("data-message-id");
               const isSystemMessage =
                 entry.target.getAttribute("data-system-message") === "true";
-              if (messageId && !isSystemMessage) {
-                updateDoc(doc(db, "messages", messageId), {
-                  read: true,
-                }).catch(console.error);
+              if (messageId && !isSystemMessage && selectedChat) {
+                api
+                  .post(`/api/chats/${selectedChat.id}/read`)
+                  .catch(console.error);
               }
             }
           });
@@ -567,29 +532,11 @@ const MobileChatWindow = memo(
       if (!selectedChat || !user || (!text.trim() && !imageUrl)) return;
 
       try {
-        const messageData: any = {
+        await api.post("/api/messages", {
           chatId: selectedChat.id,
-          text: text.trim(),
-          senderId: user.uid,
-          receiverId: selectedChat.participants.find((id) => id !== user.uid),
-          timestamp: serverTimestamp(),
-          read: false,
-        };
-
-        if (imageUrl) {
-          messageData.imageUrl = imageUrl;
-        }
-
-        await addDoc(collection(db, "messages"), messageData);
-
-        await updateDoc(doc(db, "chats", selectedChat.id), {
-          lastMessage: {
-            text: text.trim(),
-            timestamp: serverTimestamp(),
-          },
-          lastMessageTime: serverTimestamp(),
+          text: text.trim() || undefined,
+          imageUrl,
         });
-
         setNewMessage("");
       } catch (error) {
         console.error("Error sending message:", error);
@@ -600,13 +547,8 @@ const MobileChatWindow = memo(
       if (!selectedChat || !user) return;
 
       try {
-        const storageRef = ref(
-          storage,
-          `chat-images/${selectedChat.id}/${Date.now()}-${file.name}`
-        );
-        const snapshot = await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadURL(snapshot.ref);
-        await sendMessage("", downloadURL);
+        const { publicUrl } = await uploadFile(file, "message");
+        await sendMessage("", publicUrl);
       } catch (error) {
         console.error("Error uploading image:", error);
       }
@@ -1235,138 +1177,71 @@ export default function Messages() {
     [user?.uid]
   );
 
-  // Create system message for trade match
-  const createTradeMatchMessage = useCallback(async (chatId: string) => {
-    try {
-      const systemMessageQuery = query(
-        collection(db, "messages"),
-        where("chatId", "==", chatId),
-        where("isSystemMessage", "==", true)
-      );
-
-      const systemMessageSnap = await getDocs(systemMessageQuery);
-
-      if (systemMessageSnap.empty) {
-        await addDoc(collection(db, "messages"), {
-          chatId,
-          text: "🎉 You both were matched because of a trade!",
-          senderId: "system",
-          receiverId: "system",
-          timestamp: serverTimestamp(),
-          read: true,
-          isSystemMessage: true,
-          readable: false,
-        });
-      }
-    } catch (error) {
-      console.error("Error creating trade match message:", error);
-    }
-  }, []);
-
-  // Create new chat
+  // Create new chat via API (server upserts on canonical pair)
   const createNewChat = useCallback(
     async (otherUserId: string) => {
       if (!user) return;
-
       try {
-        const existingChatQuery = query(
-          collection(db, "chats"),
-          where("participants", "array-contains", user.uid)
+        const chat = await api.get<any>(
+          `/api/chats/with/${encodeURIComponent(otherUserId)}`
         );
-
-        const existingChatSnap = await getDocs(existingChatQuery);
-        const existingChat = existingChatSnap.docs.find((doc) => {
-          const data = doc.data();
-          return (
-            data.participants.includes(otherUserId) &&
-            data.participants.length === 2
-          );
-        });
-
-        if (existingChat) {
-          const chatData = existingChat.data() as Chat;
-          const chat: Chat = {
-            id: existingChat.id,
-            participants: chatData.participants,
-            lastMessageTime: chatData.lastMessageTime,
-            unreadCount: chatData.unreadCount || 0,
-          };
-          setSelectedChat(chat);
-          setChatWindowLoading(true);
-          await createTradeMatchMessage(chat.id);
-          return;
-        }
-
-        const chatRef = await addDoc(collection(db, "chats"), {
-          participants: [user.uid, otherUserId].sort(),
-          lastMessageTime: serverTimestamp(),
+        const normalized: Chat = {
+          id: chat.id,
+          participants: [chat.userA, chat.userB],
+          lastMessageTime: chat.lastMessageAt,
           unreadCount: 0,
-        });
-
-        const newChat: Chat = {
-          id: chatRef.id,
-          participants: [user.uid, otherUserId].sort(),
-          lastMessageTime: serverTimestamp(),
-          unreadCount: 0,
+          isTradeMatch: chat.isTradeMatch,
         };
-
-        setSelectedChat(newChat);
+        setSelectedChat(normalized);
         setChatWindowLoading(true);
-        await createTradeMatchMessage(newChat.id);
       } catch (error) {
         console.error("Error creating chat:", error);
       }
     },
-    [user, createTradeMatchMessage]
+    [user]
   );
 
-  // Fetch user's chats
-  useEffect(() => {
+  // Fetch user's chats + live updates via socket
+  const refreshChats = useCallback(async () => {
     if (!user) return;
-
-    const chatsQuery = query(
-      collection(db, "chats"),
-      where("participants", "array-contains", user.uid),
-      orderBy("lastMessageTime", "desc")
-    );
-
-    const unsubscribe = onSnapshot(chatsQuery, async (snapshot) => {
-      const chatsData: Chat[] = [];
-      const seenParticipants = new Set<string>();
-
-      for (const snapDoc of snapshot.docs) {
-        const chatData = snapDoc.data() as Chat;
-        chatData.id = snapDoc.id;
-
-        const otherUserId = chatData.participants.find((id) => id !== user.uid);
-        if (otherUserId) {
-          const participantsKey = [user.uid, otherUserId].sort().join("_");
-
-          if (seenParticipants.has(participantsKey)) {
-            continue;
-          }
-          seenParticipants.add(participantsKey);
-
-          try {
-            const userDocSnap = await getDoc(doc(db, "users", otherUserId));
-            if (userDocSnap.exists()) {
-              const userData = userDocSnap.data() as User;
-              chatData.otherUser = userData;
+    try {
+      const rows = await api.get<any[]>("/api/chats");
+      const mapped: Chat[] = rows.map((c) => ({
+        id: c.id,
+        participants: [c.userA, c.userB],
+        lastMessageTime: c.lastMessageAt,
+        unreadCount: c.unreadCount ?? 0,
+        isTradeMatch: c.isTradeMatch,
+        otherUser: c.partner
+          ? {
+              uid: c.partner.id,
+              username: c.partner.username ?? "",
+              displayName: c.partner.name ?? "",
+              avatar: c.partner.avatar ?? undefined,
             }
-          } catch (error) {
-            console.error("Error fetching user data:", error);
-          }
-
-          chatsData.push(chatData);
-        }
-      }
-
-      setChats(chatsData);
+          : undefined,
+      }));
+      setChats(mapped);
+    } catch (err) {
+      console.error("Failed to fetch chats:", err);
+    } finally {
       setChatListLoading(false);
-    });
-
-    return () => unsubscribe();
+    }
   }, [user]);
+
+  useEffect(() => {
+    refreshChats();
+    if (!user) return;
+    const socket = getSocket();
+    const onBump = () => refreshChats();
+    const onMsg = () => refreshChats();
+    socket.on("chat:bump", onBump);
+    socket.on("message:new", onMsg);
+    return () => {
+      socket.off("chat:bump", onBump);
+      socket.off("message:new", onMsg);
+    };
+  }, [refreshChats, user]);
 
   // Handle dynamic routes (URL-based chat selection)
   useEffect(() => {
@@ -1390,62 +1265,99 @@ export default function Messages() {
     }
   }, [userId, user, chats.length, createNewChat]);
 
-  // Fetch messages for selected chat
+  // Fetch messages for selected chat + subscribe to live updates
   useEffect(() => {
     if (!selectedChat || !user) return;
+    let cancelled = false;
 
-    const messagesQuery = query(
-      collection(db, "messages"),
-      where("chatId", "==", selectedChat.id),
-      orderBy("timestamp", "asc")
-    );
+    const chatId = selectedChat.id;
 
-    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      const messagesData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Message[];
-      setMessages(messagesData);
-      setChatWindowLoading(false);
-    });
+    api
+      .get<any[]>(`/api/chats/${chatId}/messages?limit=100`)
+      .then((rows) => {
+        if (cancelled) return;
+        const mapped: Message[] = rows.map((m) => ({
+          id: m.id,
+          text: m.text ?? "",
+          imageUrl: m.imageUrl ?? undefined,
+          senderId: m.senderId,
+          receiverId: "",
+          timestamp: m.createdAt,
+          read: m.readAt != null,
+          isSystemMessage: m.isSystem,
+        }));
+        setMessages(mapped);
+        setChatWindowLoading(false);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch messages:", err);
+        setChatWindowLoading(false);
+      });
 
-    return () => unsubscribe();
+    const socket = getSocket();
+    socket.emit("chat:join", chatId);
+    const onNew = (m: any) => {
+      if (m.chatId !== chatId) return;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: m.id,
+          text: m.text ?? "",
+          imageUrl: m.imageUrl ?? undefined,
+          senderId: m.senderId,
+          receiverId: "",
+          timestamp: m.createdAt,
+          read: m.readAt != null,
+          isSystemMessage: m.isSystem,
+        },
+      ]);
+    };
+    const onRead = (payload: any) => {
+      if (payload.chatId !== chatId) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          payload.ids?.includes(m.id) ? { ...m, read: true } : m
+        )
+      );
+    };
+    socket.on("message:new", onNew);
+    socket.on("message:read", onRead);
+    return () => {
+      cancelled = true;
+      socket.emit("chat:leave", chatId);
+      socket.off("message:new", onNew);
+      socket.off("message:read", onRead);
+    };
   }, [selectedChat, user]);
 
-  // Get other user info when chat is selected
+  // Other user info derived from chat.otherUser (server returns it on /api/chats)
   useEffect(() => {
     if (!selectedChat || !user) {
       setOtherUser(null);
       return;
     }
-
-    const otherUserId = selectedChat.participants.find((id) => id !== user.uid);
-    if (otherUserId) {
-      let isMounted = true;
-
-      getDoc(doc(db, "users", otherUserId))
-        .then((userDoc) => {
-          if (!isMounted) return;
-
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as User;
-            setOtherUser(userData);
-          } else {
-            setOtherUser(null);
-          }
-        })
-        .catch((error) => {
-          if (!isMounted) return;
-          console.error("Error fetching other user:", error);
-          setOtherUser(null);
-        });
-
-      return () => {
-        isMounted = false;
-      };
-    } else {
-      setOtherUser(null);
+    if (selectedChat.otherUser) {
+      setOtherUser(selectedChat.otherUser);
+      return;
     }
+    const otherUserId = selectedChat.participants.find((id) => id !== user.uid);
+    if (!otherUserId) {
+      setOtherUser(null);
+      return;
+    }
+    let cancelled = false;
+    fetchUserData(otherUserId).then((data) => {
+      if (cancelled || !data) return;
+      setOtherUser({
+        uid: data.uid,
+        username: data.username,
+        displayName: data.displayName,
+        avatar: data.avatar,
+      } as User);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedChat?.id, user?.uid]);
 
   // Memoized chat selection handler

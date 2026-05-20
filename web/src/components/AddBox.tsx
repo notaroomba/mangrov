@@ -2,11 +2,8 @@ import { ChevronDown, Plus, X } from "lucide-react";
 import { motion } from "framer-motion";
 import Select, { components, type StylesConfig } from "react-select";
 import { INTERESTS } from "../utils/constants";
-// import BackButton from "./BackButton";
-import { Timestamp, addDoc, collection } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useState } from "react";
-import { storage, db } from "../utils/firebase";
+import { api, uploadFile } from "../lib/api";
 import GlobalSpinner from "./GlobalSpinner";
 import { useAuth } from "../hooks/useAuth";
 
@@ -108,43 +105,43 @@ export default function AddBox({ type, setStage }: any) {
     }
     try {
       setLoading(true);
-      const folder = type === "post" ? "post-images" : "trade-images";
       const urls: string[] = [];
       for (const file of images) {
-        const storageRef = ref(storage, `${folder}/${Date.now()}_${file.name}`);
-        await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(storageRef);
-        urls.push(url);
+        const { publicUrl } = await uploadFile(
+          file,
+          type === "post" ? "post" : "trade"
+        );
+        urls.push(publicUrl);
       }
 
-      const postData: any = {
+      const basePayload = {
         title,
         description,
         images: urls,
         keywords,
-        niche: [niche?.label],
-        timestamp: Timestamp.now(),
-        uid: user.uid, // Add user ID to all content
       };
-      const docRef = await addDoc(
-        collection(db, type === "post" ? "posts" : "trades"),
-        type === "post"
-          ? {
-              ...postData,
-              price: parseFloat(price as string),
-              quantity: parseInt(quantity as string) || 1,
-              url: externalLink || null,
-            }
-          : {
-              ...postData,
-              quantity: parseInt(tradeQuantity as string) || 1,
-              isAvailable: true,
-            }
-      );
-      console.log("Document written: ", docRef.id);
+
+      let created: { id: string };
+      if (type === "post") {
+        created = await api.post<{ id: string }>("/api/posts", {
+          ...basePayload,
+          niche: niche?.label ? [niche.label] : [],
+          price: parseFloat(price as string),
+          quantity: parseInt(quantity as string) || 1,
+          url: externalLink || null,
+          isAvailable: true,
+        });
+      } else {
+        created = await api.post<{ id: string }>("/api/trades", {
+          ...basePayload,
+          niche: niche?.label ?? null,
+          quantity: parseInt(tradeQuantity as string) || 1,
+          isAvailable: true,
+        });
+      }
 
       if (type === "trade") {
-        setCreatedTradeId(docRef.id);
+        setCreatedTradeId(created.id);
         setSuccess(true);
       } else {
         setStage("select");

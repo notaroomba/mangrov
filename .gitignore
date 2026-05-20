@@ -1,2 +1,5 @@
 web/.env
 app/.env
+/node_modules
+config.json
+DEPLOY.md

@@ -8,15 +8,7 @@ import {
   ShoppingCart,
   Send,
 } from "lucide-react";
-import {
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-  addDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "../utils/firebase";
+import { api } from "../lib/api";
 import type { Post } from "../utils/types";
 import CommentItem from "./CommentItem";
 import Slider from "react-slick";
@@ -34,7 +26,6 @@ const wrapperAnim = {
 export default function PostDetailModal({
   post,
   onClose,
-  user,
   liked,
   saved,
   handleLike,
@@ -42,7 +33,7 @@ export default function PostDetailModal({
 }: {
   post: Post;
   onClose: () => void;
-  user: any;
+  user?: any;
   liked: boolean;
   saved: boolean;
   handleLike: () => void;
@@ -61,17 +52,33 @@ export default function PostDetailModal({
 
   const products = useBusinessProducts(post.business);
 
+  const refreshComments = async () => {
+    try {
+      const rows = await api.get<any[]>(`/api/posts/${post.id}/comments`);
+      // Server returns desc; reverse for asc display
+      setComments(
+        [...rows].reverse().map((c) => ({
+          id: c.id,
+          text: c.text,
+          user: c.userId,
+          timestamp: c.createdAt,
+        }))
+      );
+    } catch (err) {
+      console.error("Failed to load comments:", err);
+    }
+  };
+
   const handleComment = async () => {
     if (!newComment.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
     try {
-      await addDoc(collection(db, "posts", post.id, "comments"), {
+      await api.post(`/api/posts/${post.id}/comments`, {
         text: newComment.trim(),
-        user: user.uid,
-        timestamp: serverTimestamp(),
       });
       setNewComment("");
+      await refreshComments();
     } catch (error) {
       console.error("Error posting comment:", error);
     } finally {
@@ -79,20 +86,18 @@ export default function PostDetailModal({
     }
   };
 
-  const handleReply = async (commentId: string, replyToUserId: string) => {
+  const handleReply = async (_commentId: string, _replyToUserId: string) => {
     if (!replyText.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
     try {
-      await addDoc(collection(db, "posts", post.id, "comments"), {
+      // Replies are stored as plain comments for now (no thread metadata in v1).
+      await api.post(`/api/posts/${post.id}/comments`, {
         text: replyText.trim(),
-        user: user.uid,
-        timestamp: serverTimestamp(),
-        replyToId: commentId,
-        replyToUserId,
       });
       setReplyText("");
       setReplyingTo(null);
+      await refreshComments();
     } catch (error) {
       console.error("Error posting reply:", error);
     } finally {
@@ -108,19 +113,8 @@ export default function PostDetailModal({
   };
 
   useEffect(() => {
-    const q = query(
-      collection(db, "posts", post.id, "comments"),
-      orderBy("timestamp", "asc")
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setComments(
-        snap.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        }))
-      );
-    });
-    return () => unsub();
+    refreshComments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [post.id]);
 
   // 🔒 Close picker if clicked outside
@@ -215,7 +209,13 @@ export default function PostDetailModal({
               </p>
             )}
             <p className="text-xs text-neutral-400 mt-2">
-              {post.timestamp?.toDate().toLocaleString()}
+              {post.timestamp
+                ? new Date(
+                    typeof (post.timestamp as any)?.toDate === "function"
+                      ? (post.timestamp as any).toDate()
+                      : post.timestamp
+                  ).toLocaleString()
+                : ""}
             </p>
           </div>
 

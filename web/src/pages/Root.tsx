@@ -3,7 +3,6 @@ import { Outlet, useLocation, useNavigate } from "react-router";
 
 import Sidebar from "../components/Sidebar";
 import MobileNav from "../components/MobileNav";
-import "../utils/firebase";
 import { AnimatePresence } from "motion/react";
 import { useAuth } from "../hooks/useAuth";
 import { UnreadMessagesProvider } from "../hooks/useUnreadMessages";

@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Mail, ArrowLeft, CheckCircle } from "lucide-react";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "../utils/firebase";
+import { forgetPassword } from "../lib/auth-client";
 import { useNavigate } from "react-router";
 import PageWrapper from "../components/PageWrapper";
 import ImageStrip from "../components/ImageStrip";
@@ -61,16 +60,19 @@ export default function ResetPassword() {
     setError(null);
 
     try {
-      await sendPasswordResetEmail(auth, email);
-      setSent(true);
-    } catch (err: any) {
-      if (err.code === "auth/user-not-found") {
-        setError("No account found with this email address");
-      } else if (err.code === "auth/too-many-requests") {
-        setError("Too many attempts. Please try again later");
+      const redirectTo = `${window.location.origin}/auth/action?mode=resetPassword`;
+      const { error: apiError } = await forgetPassword({
+        email,
+        redirectTo,
+      });
+      if (apiError) {
+        setError(apiError.message ?? "Failed to send reset email. Please try again");
       } else {
-        setError("Failed to send reset email. Please try again");
+        setSent(true);
       }
+    } catch (err) {
+      console.error("Reset password error:", err);
+      setError("Failed to send reset email. Please try again");
     } finally {
       setLoading(false);
     }
@@ -96,7 +98,6 @@ export default function ResetPassword() {
 
         <div className="relative z-10 min-h-screen flex flex-col justify-center px-4 sm:px-6">
           <div className="mx-auto w-full max-w-sm">
-            {/* Back Button */}
             <motion.button
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -108,7 +109,6 @@ export default function ResetPassword() {
               <span className="text-sm">Back to Sign In</span>
             </motion.button>
 
-            {/* Logo */}
             <motion.img
               src="/icon.png"
               alt="logo"

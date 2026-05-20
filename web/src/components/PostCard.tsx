@@ -2,15 +2,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
 import { Bookmark, Heart, ChevronDown, ChevronUp } from "lucide-react";
 import type { Post } from "../utils/types";
-import { db } from "../utils/firebase";
-import {
-  doc,
-  setDoc,
-  deleteDoc,
-  getDoc,
-  collection,
-  onSnapshot,
-} from "firebase/firestore";
+import { api } from "../lib/api";
 import { useAuth } from "../hooks/useAuth";
 import PostDetailModal from "./PostDetailModal";
 
@@ -35,45 +27,49 @@ export default function PostCard({
   const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
-    if (!user || !post?.id) return;
+    if (!post?.id) return;
+    let cancelled = false;
 
-    const likeDocRef = doc(db, "posts", post.id, "likes", user.uid);
-    const likeCollectionRef = collection(db, "posts", post.id, "likes");
-
-    const unsubscribe = onSnapshot(likeCollectionRef, (snapshot) => {
-      setLikeCount(snapshot.size);
-    });
-
-    getDoc(likeDocRef).then((docSnap) => {
-      setLiked(docSnap.exists());
-    });
+    api.get<{ count: number }>(`/api/posts/${post.id}/likes`).then((r) => {
+      if (!cancelled) setLikeCount(r.count ?? 0);
+    }).catch(() => {});
 
     setSaved(userSavedPosts.includes(post.id));
 
-    return () => unsubscribe();
-  }, [user, post, userSavedPosts]);
+    return () => { cancelled = true; };
+  }, [post, userSavedPosts]);
 
   const handleLike = async () => {
-    setLiked(!liked);
     if (!user) return;
-    const likeDocRef = doc(db, "posts", post.id, "likes", user.uid);
-
-    if (liked) {
-      await deleteDoc(likeDocRef);
-    } else {
-      await setDoc(likeDocRef, {
-        timestamp: Date.now(),
-      });
+    const next = !liked;
+    setLiked(next);
+    setLikeCount((c) => Math.max(0, c + (next ? 1 : -1)));
+    try {
+      if (next) {
+        await api.post(`/api/posts/${post.id}/like`);
+      } else {
+        await api.delete(`/api/posts/${post.id}/like`);
+      }
+    } catch (err) {
+      setLiked(!next);
+      setLikeCount((c) => Math.max(0, c + (next ? -1 : 1)));
+      console.error("Failed to toggle like:", err);
     }
   };
 
   const handleSave = async () => {
-    setSaved(!saved);
-    const saveDocRef = doc(db, "users", user?.uid as string, "saves", post.id);
-    if (saved) {
-      await deleteDoc(saveDocRef);
-    } else {
-      await setDoc(saveDocRef, { timestamp: Date.now() });
+    if (!user) return;
+    const next = !saved;
+    setSaved(next);
+    try {
+      if (next) {
+        await api.post(`/api/posts/${post.id}/save`);
+      } else {
+        await api.delete(`/api/posts/${post.id}/save`);
+      }
+    } catch (err) {
+      setSaved(!next);
+      console.error("Failed to toggle save:", err);
     }
   };
 

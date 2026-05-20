@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
-import { doc, getDoc, Timestamp } from "firebase/firestore";
-import { db } from "../utils/firebase";
 import { motion } from "framer-motion";
 import { Reply, Send } from "lucide-react";
 import dayjs from "dayjs";
+import { fetchUserData } from "../utils/firebaseHelpers";
 
 type CommentType = {
   id: string;
   text: string;
   user: string;
-  timestamp: Timestamp;
+  timestamp: any;
   replyToId?: string;
   replyToUserId?: string;
 };
@@ -47,9 +46,9 @@ export default function CommentItem({
     const fetchUser = async () => {
       try {
         setIsLoading(true);
-        const userSnap = await getDoc(doc(db, "users", comment.user));
-        if (userSnap.exists()) {
-          setUserData(userSnap.data() as { avatar?: string; name: string });
+        const data = await fetchUserData(comment.user);
+        if (data) {
+          setUserData({ avatar: data.avatar, name: data.displayName || data.username || "Unknown" });
         }
       } catch (error) {
         console.error("Error fetching user data:", error);
@@ -64,12 +63,9 @@ export default function CommentItem({
     const fetchReplyToName = async () => {
       if (comment.replyToUserId) {
         try {
-          const replyUserSnap = await getDoc(
-            doc(db, "users", comment.replyToUserId)
-          );
-          if (replyUserSnap.exists()) {
-            const data = replyUserSnap.data() as { name: string };
-            setReplyToName(data.name);
+          const data = await fetchUserData(comment.replyToUserId);
+          if (data) {
+            setReplyToName(data.displayName || data.username || null);
           }
         } catch (error) {
           console.error("Error fetching reply user data:", error);
@@ -81,8 +77,13 @@ export default function CommentItem({
 
   useEffect(() => {
     if (comment.timestamp) {
-      const time = dayjs(comment.timestamp.toDate()).format("HH:mm");
-      setFormattedTime(time);
+      const date =
+        typeof comment.timestamp === "string"
+          ? new Date(comment.timestamp)
+          : typeof comment.timestamp?.toDate === "function"
+          ? comment.timestamp.toDate()
+          : new Date(comment.timestamp);
+      setFormattedTime(dayjs(date).format("HH:mm"));
     }
   }, [comment.timestamp]);
 
@@ -139,7 +140,6 @@ export default function CommentItem({
       } ${isHighlighted ? "bg-primary/20" : ""}`}
     >
       <div className="flex items-start gap-3">
-        {/* User Avatar */}
         <div className="flex-shrink-0">
           {userData?.avatar ? (
             <img
@@ -162,7 +162,6 @@ export default function CommentItem({
           </div>
         </div>
 
-        {/* Comment Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className="font-semibold text-primary text-sm">
@@ -182,7 +181,6 @@ export default function CommentItem({
             {comment.text}
           </div>
 
-          {/* Reply Button */}
           <div className="flex items-center mt-2">
             <button
               onClick={() => onReplyClick(comment.id)}
@@ -196,7 +194,6 @@ export default function CommentItem({
         </div>
       </div>
 
-      {/* Reply Input */}
       {isReplying && (
         <motion.div
           initial={{ opacity: 0, height: 0 }}

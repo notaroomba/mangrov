@@ -1,0 +1,19 @@
+{
+  "name": "mangrov",
+  "private": true,
+  "workspaces": [
+    "web",
+    "server",
+    "e2e"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace server run dev",
+    "dev:web": "npm --workspace web run dev",
+    "build:server": "npm --workspace server run build",
+    "build:web": "npm --workspace web run build",
+    "db:generate": "npm --workspace server run db:generate",
+    "db:migrate": "npm --workspace server run db:migrate",
+    "db:push": "npm --workspace server run db:push",
+    "test:e2e": "npm --workspace e2e run test"
+  }
+}

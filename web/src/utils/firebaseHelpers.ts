@@ -1,121 +1,111 @@
-import { collection, query, where, getDocs } from "firebase/firestore";
-import { db } from "./firebase";
+// Kept the original filename to avoid touching unrelated imports.
+// All functions now route through the Postgres API rather than Firestore.
+import { api, ApiError } from "../lib/api";
 import type { Post } from "./types";
 
-/**
- * Checks if a username already exists in the database
- * @param username - The username to check
- * @param excludeUserId - Optional user ID to exclude from the check (for updates)
- * @returns Promise<boolean> - True if username exists, false otherwise
- */
 export const checkUsernameExists = async (
   username: string,
   excludeUserId?: string
 ): Promise<boolean> => {
   try {
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, where("username", "==", username));
-    const querySnapshot = await getDocs(q);
-    
-    if (excludeUserId) {
-      // For updates, exclude the current user's document
-      return querySnapshot.docs.some(doc => doc.id !== excludeUserId);
+    const { available } = await api.get<{ available: boolean }>(
+      `/api/users/check-username?u=${encodeURIComponent(username)}`
+    );
+    if (!available && excludeUserId) {
+      // If the only match is the current user, treat as not-taken.
+      const me = await api.get<{ id: string }>(`/api/users/me`).catch(() => null);
+      if (me && me.id === excludeUserId) return false;
     }
-    
-    return !querySnapshot.empty;
+    return !available;
   } catch (error) {
     console.error("Error checking username existence:", error);
     return false;
   }
 };
 
-/**
- * Fetches user data by user ID
- * @param userId - The user ID to fetch data for
- * @returns Promise with user data or null if not found
- */
+type ServerUser = {
+  id: string;
+  name: string | null;
+  username: string | null;
+  avatar: string | null;
+  country: string | null;
+  language: string | null;
+  interests?: string[];
+  email?: string;
+};
+
+function toFirestoreShape(u: ServerUser) {
+  return {
+    uid: u.id,
+    displayName: u.name ?? "",
+    username: u.username ?? "",
+    avatar: u.avatar ?? "",
+    country: u.country ?? "",
+    language: u.language ?? "",
+    interests: u.interests ?? [],
+    email: u.email,
+  };
+}
+
 export const fetchUserData = async (userId: string) => {
   try {
-    const { doc, getDoc } = await import("firebase/firestore");
-    const userDoc = await getDoc(doc(db, "users", userId));
-    if (userDoc.exists()) {
-      return userDoc.data();
-    }
-    return null;
+    const u = await api.get<ServerUser>(`/api/users/${encodeURIComponent(userId)}`);
+    return toFirestoreShape(u);
   } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
     console.error("Error fetching user data:", error);
     return null;
   }
 };
 
-/**
- * Fetches user data by username
- * @param username - The username to fetch data for
- * @returns Promise with user data or null if not found
- */
 export const fetchUserByUsername = async (username: string) => {
+  // We expose lookup by id; for username we filter via a server-side scan.
   try {
-    const usersQuery = query(
-      collection(db, "users"),
-      where("username", "==", username)
-    );
-    const usersSnap = await getDocs(usersQuery);
-    
-    if (!usersSnap.empty) {
-      const userDoc = usersSnap.docs[0];
-      return { uid: userDoc.id, ...userDoc.data() };
-    }
-    return null;
+    const u = await api
+      .get<ServerUser>(`/api/users/by-username/${encodeURIComponent(username)}`)
+      .catch(() => null);
+    if (!u) return null;
+    return toFirestoreShape(u);
   } catch (error) {
     console.error("Error fetching user by username:", error);
     return null;
   }
 };
 
-/**
- * Fetches user's trades by user ID
- * @param userId - The user ID to fetch trades for
- * @returns Promise with array of trades
- */
 export const fetchUserTrades = async (userId: string): Promise<Post[]> => {
   try {
-    const tradesQuery = query(
-      collection(db, "trades"),
-      where("uid", "==", userId)
+    const rows = await api.get<any[]>(
+      `/api/trades?userId=${encodeURIComponent(userId)}`
     );
-    const tradesSnap = await getDocs(tradesQuery);
-    return tradesSnap.docs
-      .map((doc) => ({ id: doc.id, ...doc.data() } as Post))
-      .filter((trade) => trade.isAvailable !== false); // Only show available trades
+    return rows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      images: t.images ?? [],
+      keywords: t.keywords ?? [],
+      niche: t.niche ? [t.niche] : [],
+      likes: false,
+      saves: false,
+      business: "",
+      comments: false,
+      timestamp: t.createdAt,
+      url: "",
+      productIds: [],
+      uid: t.userId,
+      isAvailable: t.isAvailable,
+    }));
   } catch (error) {
     console.error("Error fetching user trades:", error);
     return [];
   }
 };
 
-/**
- * Fetches user's saved posts by user ID
- * @param userId - The user ID to fetch saved posts for
- * @returns Promise with array of saved posts
- */
-export const fetchSavedPosts = async (userId: string) => {
+export const fetchSavedPosts = async (_userId: string) => {
   try {
-    // Fetch from the 'saves' subcollection where each document ID is a post ID
-    const savesQuery = query(collection(db, "users", userId, "saves"));
-    const savesSnap = await getDocs(savesQuery);
-    const savedPostIds = savesSnap.docs.map((doc) => doc.id);
-    
-    if (savedPostIds.length === 0) return [];
-    
-    // Fetch the actual post data from the 'posts' collection
-    const savedPostsQuery = query(
-      collection(db, "posts"),
-      where("__name__", "in", savedPostIds)
-    );
-    const savedPostsSnap = await getDocs(savedPostsQuery);
-    return savedPostsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const rows = await api.get<any[]>(`/api/users/me/saves`);
+    return rows.map((p) => ({ ...p, id: p.id }));
   } catch (error) {
     console.error("Error fetching saved posts:", error);
     return [];
   }
-}; 
+};

@@ -1,12 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { CheckCircle, XCircle, Loader2, ArrowLeft } from "lucide-react";
-import {
-  confirmPasswordReset,
-  applyActionCode,
-  checkActionCode,
-} from "firebase/auth";
-import { auth } from "../utils/firebase";
+import { resetPassword, verifyEmail } from "../lib/auth-client";
 import { useNavigate, useSearchParams } from "react-router";
 import PageWrapper from "../components/PageWrapper";
 import ImageStrip from "../components/ImageStrip";
@@ -32,7 +27,6 @@ export default function AuthAction() {
   const [action, setAction] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [email, setEmail] = useState<string | null>(null);
 
   const [width, height] = useWindowSize();
   const [stripData] = useState(() => {
@@ -59,9 +53,9 @@ export default function AuthAction() {
   useEffect(() => {
     const handleAuthAction = async () => {
       const mode = searchParams.get("mode");
-      const oobCode = searchParams.get("oobCode");
+      const token = searchParams.get("token");
 
-      if (!mode || !oobCode) {
+      if (!mode || !token) {
         setError("Invalid action link. Please try requesting a new one.");
         setLoading(false);
         return;
@@ -70,45 +64,29 @@ export default function AuthAction() {
       setAction(mode);
 
       try {
-        // Check the action code to get the email
-        const actionCodeInfo = await checkActionCode(auth, oobCode);
-        setEmail(actionCodeInfo.data.email || null);
-
         switch (mode) {
           case "resetPassword":
-            // For password reset, we'll show the password form
             setLoading(false);
             break;
 
-          case "verifyEmail":
-            // Verify email
-            await applyActionCode(auth, oobCode);
-            setSuccess(true);
+          case "verifyEmail": {
+            const { error: apiError } = await verifyEmail({ query: { token } });
+            if (apiError) {
+              setError(apiError.message ?? "Verification failed.");
+            } else {
+              setSuccess(true);
+            }
             setLoading(false);
             break;
-
-          case "recoverEmail":
-            // Recover email
-            await applyActionCode(auth, oobCode);
-            setSuccess(true);
-            setLoading(false);
-            break;
+          }
 
           default:
             setError("Unknown action type.");
             setLoading(false);
         }
-      } catch (err: any) {
+      } catch (err) {
         console.error("Auth action error:", err);
-        if (err.code === "auth/invalid-action-code") {
-          setError(
-            "This link has expired or is invalid. Please request a new one."
-          );
-        } else if (err.code === "auth/expired-action-code") {
-          setError("This link has expired. Please request a new one.");
-        } else {
-          setError("An error occurred. Please try again.");
-        }
+        setError("An error occurred. Please try again.");
         setLoading(false);
       }
     };
@@ -131,21 +109,24 @@ export default function AuthAction() {
     setError(null);
 
     try {
-      const oobCode = searchParams.get("oobCode");
-      if (!oobCode) {
+      const token = searchParams.get("token");
+      if (!token) {
         setError("Invalid reset code.");
+        setLoading(false);
         return;
       }
-
-      await confirmPasswordReset(auth, oobCode, newPassword);
-      setSuccess(true);
-    } catch (err: any) {
-      console.error("Password reset error:", err);
-      if (err.code === "auth/weak-password") {
-        setError("Password is too weak. Please choose a stronger password.");
+      const { error: apiError } = await resetPassword({
+        newPassword,
+        token,
+      });
+      if (apiError) {
+        setError(apiError.message ?? "Failed to reset password.");
       } else {
-        setError("Failed to reset password. Please try again.");
+        setSuccess(true);
       }
+    } catch (err) {
+      console.error("Password reset error:", err);
+      setError("Failed to reset password. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -161,8 +142,6 @@ export default function AuthAction() {
         return "Reset Password";
       case "verifyEmail":
         return "Verify Email";
-      case "recoverEmail":
-        return "Recover Email";
       default:
         return "Account Action";
     }
@@ -174,8 +153,6 @@ export default function AuthAction() {
         return "Enter your new password below.";
       case "verifyEmail":
         return "Your email has been verified successfully!";
-      case "recoverEmail":
-        return "Your email has been recovered successfully!";
       default:
         return "";
     }
@@ -197,7 +174,6 @@ export default function AuthAction() {
 
         <div className="relative z-10 min-h-screen flex flex-col justify-center px-4 sm:px-6">
           <div className="mx-auto w-full max-w-sm">
-            {/* Back Button */}
             <motion.button
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -209,7 +185,6 @@ export default function AuthAction() {
               <span className="text-sm">Back to Sign In</span>
             </motion.button>
 
-            {/* Logo */}
             <motion.img
               src="/icon.png"
               alt="logo"
@@ -239,9 +214,7 @@ export default function AuthAction() {
                 <h1 className="text-2xl sm:text-3xl font-extrabold mb-4 text-white">
                   Error
                 </h1>
-                <p className="text-sm sm:text-base mb-6 text-white/70">
-                  {error}
-                </p>
+                <p className="text-sm sm:text-base mb-6 text-white/70">{error}</p>
                 <motion.button
                   whileTap={{ scale: 0.97 }}
                   onClick={handleBackToLogin}
@@ -277,17 +250,6 @@ export default function AuthAction() {
                 <p className="text-sm sm:text-base mb-6 text-white/70 text-center">
                   {getActionDescription()}
                 </p>
-
-                {email && (
-                  <div className="bg-neutral-900/50 rounded-lg p-4 mb-6">
-                    <p className="text-xs text-white/50">
-                      Resetting password for:{" "}
-                      <span className="text-primary font-semibold">
-                        {email}
-                      </span>
-                    </p>
-                  </div>
-                )}
 
                 <div className="space-y-4">
                   <div>

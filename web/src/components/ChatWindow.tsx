@@ -1,15 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Image as ImageIcon } from "lucide-react";
-import {
-  collection,
-  addDoc,
-  updateDoc,
-  doc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "../utils/firebase";
+import { api, uploadFile } from "../lib/api";
 import { useAuth } from "../hooks/useAuth";
 import type { Chat, Message, User } from "../utils/types";
 
@@ -35,14 +27,12 @@ export default function ChatWindow({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     if (messagesEndRef.current && isAtBottom) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, isAtBottom]);
 
-  // Auto-scroll to bottom when chat is first selected
   useEffect(() => {
     if (selectedChat && messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -50,79 +40,38 @@ export default function ChatWindow({
     }
   }, [selectedChat?.id]);
 
-  // Handle scroll events to detect when user is at bottom
   const handleScroll = () => {
     if (!messagesContainerRef.current) return;
-
     const { scrollTop, scrollHeight, clientHeight } =
       messagesContainerRef.current;
     const isBottom = scrollTop + clientHeight >= scrollHeight - 10;
     setIsAtBottom(isBottom);
   };
 
-  // Intersection Observer to mark messages as read when they come into viewport
+  // Mark messages as read when chat becomes visible
   useEffect(() => {
     if (!selectedChat || !user) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const messageId = entry.target.getAttribute("data-message-id");
-            if (messageId) {
-              // Mark message as read in Firestore
-              updateDoc(doc(db, "messages", messageId), {
-                read: true,
-              }).catch(console.error);
-            }
-          }
-        });
-      },
-      { threshold: 0.5 }
+    let cancelled = false;
+    const hasUnread = messages.some(
+      (m) => m.senderId !== user.uid && !(m as any).readAt && !(m as any).read
     );
-
-    // Observe all unread messages from other users
-    const unreadMessages = document.querySelectorAll("[data-message-id]");
-    unreadMessages.forEach((el: Element) => {
-      const messageId = el.getAttribute("data-message-id");
-      const senderId = el.getAttribute("data-sender-id");
-      if (messageId && senderId && senderId !== user.uid) {
-        observer.observe(el);
-      }
+    if (!hasUnread) return;
+    api.post(`/api/chats/${selectedChat.id}/read`).catch((err) => {
+      if (!cancelled) console.error("Failed to mark read:", err);
     });
-
-    return () => observer.disconnect();
+    return () => {
+      cancelled = true;
+    };
   }, [messages, selectedChat, user]);
 
   const sendMessage = async (text: string, imageUrl?: string) => {
     if (!selectedChat || !user || (!text.trim() && !imageUrl)) return;
-
     try {
-      const messageData: any = {
+      await api.post("/api/messages", {
         chatId: selectedChat.id,
-        text: text.trim(),
-        senderId: user.uid,
-        receiverId: selectedChat.participants.find((id) => id !== user.uid),
-        timestamp: serverTimestamp(),
-        read: false,
-      };
-
-      // Only add imageUrl if it exists
-      if (imageUrl) {
-        messageData.imageUrl = imageUrl;
-      }
-
-      await addDoc(collection(db, "messages"), messageData);
-
-      // Update chat's last message
-      await updateDoc(doc(db, "chats", selectedChat.id), {
-        lastMessage: {
-          text: text.trim() || "Image",
-          senderId: user.uid,
-        },
-        lastMessageTime: serverTimestamp(),
+        text: text.trim() || undefined,
+        imageUrl,
       });
-
       setNewMessage("");
     } catch (error) {
       console.error("Error sending message:", error);
@@ -131,13 +80,9 @@ export default function ChatWindow({
 
   const handleImageUpload = async (file: File) => {
     if (!file) return;
-
     try {
-      const storageRef = ref(storage, `chat-images/${Date.now()}-${file.name}`);
-      const snapshot = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
-
-      await sendMessage("", downloadURL);
+      const { publicUrl } = await uploadFile(file, "message");
+      await sendMessage("", publicUrl);
     } catch (error) {
       console.error("Error uploading image:", error);
     }
@@ -152,7 +97,10 @@ export default function ChatWindow({
 
   const formatTime = (timestamp: any) => {
     if (!timestamp) return "";
-    const date = timestamp.toDate();
+    const date =
+      typeof timestamp?.toDate === "function"
+        ? timestamp.toDate()
+        : new Date(timestamp);
     const now = new Date();
     const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
 
@@ -190,7 +138,6 @@ export default function ChatWindow({
             transition={{ duration: 0.3 }}
             className="flex-1 flex flex-col min-h-0"
           >
-            {/* Chat Loading Skeleton */}
             <div className="p-4 border-b border-neutral-800 bg-neutral-900 flex-shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-neutral-700 rounded-full animate-pulse flex-shrink-0"></div>
@@ -200,15 +147,11 @@ export default function ChatWindow({
                 </div>
               </div>
             </div>
-
-            {/* Messages Loading Skeleton */}
             <div className="flex-1 p-4 space-y-4">
               {[1, 2, 3, 4].map((i) => (
                 <div
                   key={i}
-                  className={`flex ${
-                    i % 2 === 0 ? "justify-end" : "justify-start"
-                  }`}
+                  className={`flex ${i % 2 === 0 ? "justify-end" : "justify-start"}`}
                 >
                   <div
                     className={`max-w-[70%] min-w-[200px] ${
@@ -224,8 +167,6 @@ export default function ChatWindow({
                 </div>
               ))}
             </div>
-
-            {/* Input Loading Skeleton */}
             <div className="p-4 border-t border-neutral-800 bg-neutral-900 flex-shrink-0">
               <div className="flex gap-2">
                 <div className="flex-1 h-10 bg-neutral-700 rounded-lg animate-pulse"></div>
@@ -243,7 +184,6 @@ export default function ChatWindow({
             transition={{ duration: 0.3 }}
             className="flex-1 flex flex-col min-h-0"
           >
-            {/* Chat Header */}
             <div className="p-4 border-b border-neutral-800 bg-neutral-900 flex-shrink-0">
               <div className="flex items-center gap-3">
                 {otherUser?.avatar ? (
@@ -287,7 +227,6 @@ export default function ChatWindow({
               </div>
             </div>
 
-            {/* Messages Area */}
             <div
               ref={messagesContainerRef}
               onScroll={handleScroll}
@@ -336,7 +275,6 @@ export default function ChatWindow({
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Area */}
             <div className="p-4 border-t border-neutral-800 bg-neutral-900 flex-shrink-0">
               <form onSubmit={handleSubmit} className="flex gap-2">
                 <input

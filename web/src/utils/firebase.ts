@@ -1,23 +1,19 @@
+// Firebase has been removed from the web app. This file remains as a sentinel
+// so that any straggling import surfaces a clear error rather than a silent
+// runtime failure. The Flutter app in /app still uses Firebase directly.
 
-import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
+const stub: unknown = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error(
+        "Firebase has been removed from the web app. Use ../lib/api, ../lib/auth-client, or ../lib/socket instead."
+      );
+    },
+  }
+);
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FB_API_KEY,
-  authDomain: import.meta.env.VITE_FB_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FB_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FB_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FB_APP_ID,
-  measurementId: import.meta.env.VITE_FB_MEASUREMENT_ID,
-};
-
-export const app = initializeApp(firebaseConfig);
-
-export const auth = getAuth(app);
-
-export const db = getFirestore(app);
-
-export const storage = getStorage(app);
+export const app = stub as never;
+export const auth = stub as never;
+export const db = stub as never;
+export const storage = stub as never;

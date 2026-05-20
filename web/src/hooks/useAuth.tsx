@@ -1,62 +1,74 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-import { auth } from "../utils/firebase";
-import { signOut as firebaseSignOut } from "firebase/auth";
-import type { User } from "firebase/auth";
+import { createContext, useContext, type ReactNode } from "react";
+import { authClient, useSession, signOut as authSignOut } from "../lib/auth-client";
 
-// Define shape of auth state
+export type AppUser = {
+  uid: string;
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  name: string | null;
+  photoURL: string | null;
+  avatar: string | null;
+  username: string | null;
+  country: string | null;
+  language: string | null;
+  interests: string[];
+  emailVerified: boolean;
+};
+
 type AuthState = {
   isSignedIn: boolean;
   pending: boolean;
-  user: User | null;
+  user: AppUser | null;
   signOut: () => Promise<void>;
+  refresh: () => Promise<void>;
 };
 
-// Create context
-const AuthContext = createContext<
-  (AuthState & { auth: typeof auth }) | undefined
->(undefined);
+const AuthContext = createContext<AuthState | undefined>(undefined);
 
-// Provider component
+function mapUser(raw: any | null | undefined): AppUser | null {
+  if (!raw) return null;
+  const avatar = raw.avatar ?? raw.image ?? null;
+  return {
+    uid: raw.id,
+    id: raw.id,
+    email: raw.email ?? null,
+    displayName: raw.name ?? null,
+    name: raw.name ?? null,
+    photoURL: avatar,
+    avatar,
+    username: raw.username ?? null,
+    country: raw.country ?? null,
+    language: raw.language ?? null,
+    interests: Array.isArray(raw.interests) ? raw.interests : [],
+    emailVerified: !!raw.emailVerified,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [authState, setAuthState] = useState<AuthState>({
-    isSignedIn: false,
-    pending: true,
-    user: null,
+  const { data, isPending, refetch } = useSession();
+  const user = mapUser(data?.user);
+
+  const value: AuthState = {
+    isSignedIn: !!user,
+    pending: isPending,
+    user,
     signOut: async () => {
       try {
-        await firebaseSignOut(auth);
+        await authSignOut();
+        await refetch?.();
       } catch (error) {
         console.error("Error signing out:", error);
       }
     },
-  });
+    refresh: async () => {
+      await refetch?.();
+    },
+  };
 
-  useEffect(() => {
-    const unregisterAuthObserver = auth.onAuthStateChanged((user) =>
-      setAuthState((prev) => ({
-        ...prev,
-        user,
-        pending: false,
-        isSignedIn: !!user,
-      }))
-    );
-    return () => unregisterAuthObserver();
-  }, []);
-
-  return (
-    <AuthContext.Provider value={{ ...authState, auth }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// Hook to use the auth context
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
@@ -64,3 +76,5 @@ export function useAuth() {
   }
   return context;
 }
+
+export { authClient };

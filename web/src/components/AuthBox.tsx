@@ -1,20 +1,13 @@
 import { useState } from "react";
 import { Mail, ChevronDown, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  fetchSignInMethodsForEmail,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  updateProfile,
-} from "firebase/auth";
 import Select, { components, type StylesConfig } from "react-select";
 import countryList from "react-select-country-list";
 import type { AuthStageType } from "../utils/types";
 import { INTERESTS, LANGUAGES } from "../utils/constants";
 import BackButton from "./BackButton";
 import GreenSpinner from "./GreenSpinner";
-import { doc, setDoc } from "firebase/firestore";
-import { auth, db } from "../utils/firebase";
+import { authClient } from "../lib/auth-client";
 import { useNavigate } from "react-router";
 import { useAuth } from "../hooks/useAuth";
 import { isValidUsername } from "../utils/helpers";
@@ -83,6 +76,7 @@ export default function AuthBox() {
   const [password, setPassword] = useState("");
   const [isExistingUser, setIsExistingUser] = useState(false);
   const [errors, setErrors] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const emailValid = isValidEmail(email);
   const basicValid =
@@ -96,17 +90,16 @@ export default function AuthBox() {
 
   const { user, pending } = useAuth();
 
-  const handleEmailContinue = async () => {
+  const handleSignInChoice = () => {
     if (!emailValid) return setErrors("Please enter a valid email address");
-    try {
-      const methods = await fetchSignInMethodsForEmail(auth, email);
-      const isExisting = methods.length > 0;
-      console.log("Email check result:", { email, isExisting, methods });
-      setIsExistingUser(isExisting);
-      setStage(isExisting ? "verify" : "basic");
-    } catch (err) {
-      setErrors("Failed to check email. Please try again later.");
-    }
+    setIsExistingUser(true);
+    setStage("verify");
+  };
+
+  const handleSignUpChoice = () => {
+    if (!emailValid) return setErrors("Please enter a valid email address");
+    setIsExistingUser(false);
+    setStage("basic");
   };
 
   const handleBasicContinue = async () => {
@@ -122,7 +115,6 @@ export default function AuthBox() {
       return setErrors("Fill out all required fields");
     }
 
-    // Check if username already exists
     const usernameExists = await checkUsernameExists(username);
     if (usernameExists) {
       setErrors("Username already exists. Please choose a different one.");
@@ -143,26 +135,35 @@ export default function AuthBox() {
         "Password must be at least 8 characters, include one uppercase, one number, and one special character"
       );
 
+    setSubmitting(true);
     try {
       if (isExistingUser) {
-        await signInWithEmailAndPassword(auth, email, password);
+        const { error } = await authClient.signIn.email({ email, password });
+        if (error) {
+          setErrors(error.message ?? "Authentication failed.");
+          return;
+        }
       } else {
-        const res = await createUserWithEmailAndPassword(auth, email, password);
-        await updateProfile(res.user, {
-          displayName: name,
-        });
-        await setDoc(doc(db, "users", res.user.uid), {
-          displayName: name,
+        const { error } = await authClient.signUp.email({
+          email,
+          password,
+          name,
           username,
-          avatar: res.user.photoURL || "",
           country: country?.value || "",
           language: language?.value || "",
           interests: Array.from(selected),
-        });
+        } as any);
+        if (error) {
+          setErrors(error.message ?? "Sign up failed.");
+          return;
+        }
       }
       navigate("/dashboard");
     } catch (err) {
+      console.error(err);
       setErrors("Authentication failed. Please check your credentials.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -257,11 +258,18 @@ export default function AuthBox() {
                   />
                 </div>
                 <motion.button
-                  onClick={handleEmailContinue}
+                  onClick={handleSignInChoice}
                   className={`mt-6 w-full rounded-md py-2 ${primaryBtn}`}
                   disabled={!emailValid}
                 >
-                  Continue
+                  Sign in
+                </motion.button>
+                <motion.button
+                  onClick={handleSignUpChoice}
+                  className="mt-3 w-full rounded-md py-2 text-sm text-primary hover:text-primary/80 transition-colors cursor-pointer border border-primary/30 hover:bg-primary/10"
+                  disabled={!emailValid}
+                >
+                  Create new account
                 </motion.button>
               </motion.div>
             )}
@@ -456,15 +464,14 @@ export default function AuthBox() {
                   whileTap={{ scale: 0.97 }}
                   onClick={handlePasswordSubmit}
                   className={`w-full rounded-md py-2 ${primaryBtn}`}
-                  disabled={!password}
+                  disabled={!password || submitting}
                 >
-                  Continue
+                  {submitting ? "Working…" : "Continue"}
                 </motion.button>
                 {isExistingUser && (
                   <motion.button
                     whileTap={{ scale: 0.97 }}
                     onClick={() => {
-                      console.log("Reset password button clicked");
                       navigate("/reset-password");
                     }}
                     className="w-full mt-3 text-sm text-primary hover:text-primary/80 transition-colors cursor-pointer py-2 px-4 rounded-md hover:bg-primary/10 border border-primary/20"

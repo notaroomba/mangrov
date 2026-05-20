@@ -1,16 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { SearchIcon, Filter, X } from "lucide-react";
-import { db } from "../utils/firebase";
-import {
-  collection,
-  getDocs,
-  query,
-  orderBy,
-  limit,
-  startAfter,
-  where,
-  DocumentSnapshot,
-} from "firebase/firestore";
+import { api } from "../lib/api";
 import { useAuth } from "../hooks/useAuth";
 import { useSearchParams } from "react-router";
 import PageWrapper from "../components/PageWrapper";
@@ -29,7 +19,7 @@ export default function Search() {
   const [displayedPosts, setDisplayedPosts] = useState<Post[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [selectedInterest, setSelectedInterest] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -62,42 +52,49 @@ export default function Search() {
     return () => clearTimeout(handler);
   }, [searchTerm]);
 
+  const mapPost = (row: any): Post => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    images: row.images ?? [],
+    keywords: row.keywords ?? [],
+    niche: row.niche ?? [],
+    likes: true,
+    saves: true,
+    business: "",
+    comments: false,
+    timestamp: row.createdAt,
+    url: row.url ?? "",
+    productIds: [],
+    uid: row.userId,
+    isAvailable: row.isAvailable,
+    price: row.price != null ? Number(row.price) : undefined,
+    views: 0,
+  });
+
   const fetchInitialPosts = async () => {
-    const postsRef = collection(db, "posts");
-    const q = query(postsRef, orderBy("timestamp", "desc"), limit(BATCH_SIZE));
-    const snapshot = await getDocs(q);
-    const posts: Post[] = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Post[];
+    const rows = await api.get<any[]>(`/api/posts?limit=${BATCH_SIZE}`);
+    const posts = rows.map(mapPost);
     setAllPosts(posts);
     setFilteredPosts(posts);
     setDisplayedPosts(posts);
-    setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-    setHasMore(snapshot.docs.length === BATCH_SIZE);
+    setCursor(rows.length ? rows[rows.length - 1].createdAt : null);
+    setHasMore(rows.length === BATCH_SIZE);
   };
 
   const loadMorePosts = async () => {
-    if (!hasMore || !lastVisible) return;
-    const postsRef = collection(db, "posts");
-    const q = query(
-      postsRef,
-      orderBy("timestamp", "desc"),
-      startAfter(lastVisible),
-      limit(BATCH_SIZE)
+    if (!hasMore || !cursor) return;
+    const rows = await api.get<any[]>(
+      `/api/posts?limit=${BATCH_SIZE}&cursor=${encodeURIComponent(cursor)}`
     );
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) {
+    if (rows.length === 0) {
       setHasMore(false);
       return;
     }
-    const newPosts: Post[] = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Post[];
-
+    const newPosts = rows.map(mapPost);
     setAllPosts((prev) => [...prev, ...newPosts]);
-    setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+    setCursor(rows[rows.length - 1].createdAt);
+    if (rows.length < BATCH_SIZE) setHasMore(false);
   };
 
   const loadMoreFilteredPosts = () => {
@@ -111,26 +108,13 @@ export default function Search() {
 
   const fetchSavedPosts = useCallback(async () => {
     if (!user) return;
-
-    const savedPostsRef = collection(db, "users", user.uid, "saves");
-    const savedSnapshot = await getDocs(savedPostsRef);
-    const savedPostIds = savedSnapshot.docs.map((doc) => doc.id);
-
-    if (savedPostIds.length === 0) {
+    try {
+      const rows = await api.get<any[]>(`/api/users/me/saves`);
+      setSavedPosts(rows.map(mapPost));
+    } catch (err) {
+      console.error("fetchSavedPosts failed", err);
       setSavedPosts([]);
-      return;
     }
-
-    const savedPostsQuery = query(
-      collection(db, "posts"),
-      where("__name__", "in", savedPostIds)
-    );
-    const savedPostsSnapshot = await getDocs(savedPostsQuery);
-    const savedPostsData: Post[] = savedPostsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Post[];
-    setSavedPosts(savedPostsData);
   }, [user]);
 
   useEffect(() => {
@@ -179,8 +163,8 @@ export default function Search() {
         case "recent":
         default:
           return (
-            new Date(b.timestamp?.toDate?.() || 0).getTime() -
-            new Date(a.timestamp?.toDate?.() || 0).getTime()
+            new Date(b.timestamp || 0).getTime() -
+            new Date(a.timestamp || 0).getTime()
           );
       }
     });

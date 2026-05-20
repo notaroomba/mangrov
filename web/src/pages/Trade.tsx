@@ -1,16 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import {
-  collection,
-  getDocs,
-  query,
-  where,
-  doc,
-  getDoc,
-  addDoc,
-  updateDoc,
-  setDoc,
-} from "firebase/firestore";
-import { db } from "../utils/firebase";
+import { api } from "../lib/api";
+import { getSocket } from "../lib/socket";
 import { useAuth } from "../hooks/useAuth";
 import { motion, AnimatePresence } from "framer-motion";
 import PageWrapper from "../components/PageWrapper";
@@ -41,15 +31,15 @@ interface TradeMatch {
   id: string;
   fromUser: string;
   toUser: string;
-  fromItem: string;
-  toItem: string;
+  fromItem: string | null;
+  toItem: string | null;
   fromLiked: boolean;
   toLiked: boolean;
-  timestamp: any;
-  fromUserName?: string;
-  toUserName?: string;
-  fromItemTitle?: string;
-  toItemTitle?: string;
+  createdAt: string;
+  fromUserName?: string | null;
+  toUserName?: string | null;
+  fromItemTitle?: string | null;
+  toItemTitle?: string | null;
 }
 
 export default function Trade() {
@@ -73,274 +63,121 @@ export default function Trade() {
   const [postsLoading, setPostsLoading] = useState(false);
   const [matchesLoading, setMatchesLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
-  const [passedTrades, setPassedTrades] = useState<Set<string>>(new Set());
+  const [, setPassedTrades] = useState<Set<string>>(new Set());
   const [showResetOption, setShowResetOption] = useState(false);
 
-  // Fetch user's interests
+  // Initialize user's interests from the auth context
   useEffect(() => {
     if (!user) return;
-    const fetchUserInterests = async () => {
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      const data = userDoc.data();
-      if (data?.interests) {
-        setUserInterests(data.interests);
-        setSelectedNiches(data.interests);
-      }
-      setLoading(false);
-    };
-    fetchUserInterests();
+    if (user.interests?.length) {
+      setUserInterests(user.interests);
+      setSelectedNiches(user.interests);
+    }
+    setLoading(false);
   }, [user]);
 
   // Fetch user's trades for trading
   useEffect(() => {
     if (!user) return;
     const fetchUserTrades = async () => {
-      const q = query(collection(db, "trades"), where("uid", "==", user.uid));
-      const snap = await getDocs(q);
-      const result = snap.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Post[];
-      setUserPosts(result);
+      try {
+        const rows = await api.get<any[]>(`/api/trades?userId=me`);
+        setUserPosts(
+          rows.map((t: any) => ({
+            id: t.id,
+            title: t.title,
+            description: t.description,
+            images: t.images ?? [],
+            niche: t.niche ? [t.niche] : [],
+            uid: t.userId,
+          }))
+        );
+      } catch (err) {
+        console.error("Failed to fetch user trades:", err);
+      }
     };
     fetchUserTrades();
   }, [user]);
 
-  // Fetch matches - only show mutual matches
-  useEffect(() => {
+  // Fetch matches - only mutual matches (server-side filter)
+  const fetchMatches = useCallback(async () => {
     if (!user) return;
     setMatchesLoading(true);
-    const fetchMatches = async () => {
-      // Query for matches where current user is the fromUser
-      const fromUserQuery = query(
-        collection(db, "tradeMatches"),
-        where("fromUser", "==", user.uid)
-      );
-
-      // Query for matches where current user is the toUser
-      const toUserQuery = query(
-        collection(db, "tradeMatches"),
-        where("toUser", "==", user.uid)
-      );
-
-      const [fromUserSnap, toUserSnap] = await Promise.all([
-        getDocs(fromUserQuery),
-        getDocs(toUserQuery),
-      ]);
-
-      // Combine both results
-      const allMatches = [
-        ...fromUserSnap.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })),
-        ...toUserSnap.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })),
-      ] as TradeMatch[];
-
-      // Only show matches where both parties have liked (mutual matches)
-      const mutualMatches = allMatches.filter(
-        (match) => match.fromLiked && match.toLiked
-      );
-
-      console.log("Total matches found:", mutualMatches.length); // Debug log
-
-      // Fetch user names and trade titles for each match
-      const enrichedMatches = await Promise.all(
-        mutualMatches.map(async (match) => {
-          let fromUserName = "";
-          let toUserName = "";
-          let fromItemTitle = "";
-          let toItemTitle = "";
-
-          try {
-            console.log("Processing match:", match); // Debug log
-
-            // Get user names
-            const [fromUserDoc, toUserDoc] = await Promise.all([
-              getDoc(doc(db, "users", match.fromUser)),
-              getDoc(doc(db, "users", match.toUser)),
-            ]);
-
-            if (fromUserDoc.exists()) {
-              const fromUserData = fromUserDoc.data();
-              fromUserName =
-                fromUserData?.name || fromUserData?.username || "Unknown User";
-              console.log("From user data:", fromUserData); // Debug log
-            }
-            if (toUserDoc.exists()) {
-              const toUserData = toUserDoc.data();
-              toUserName =
-                toUserData?.name || toUserData?.username || "Unknown User";
-              console.log("To user data:", toUserData); // Debug log
-            }
-
-            // Get trade titles - handle cases where fromItem might be empty
-            const fetchPromises = [];
-
-            if (match.fromItem && match.fromItem.trim() !== "") {
-              console.log("Fetching fromItem:", match.fromItem); // Debug log
-              fetchPromises.push(getDoc(doc(db, "trades", match.fromItem)));
-            } else {
-              console.log("fromItem is empty or null"); // Debug log
-              fetchPromises.push(Promise.resolve(null));
-            }
-
-            if (match.toItem && match.toItem.trim() !== "") {
-              console.log("Fetching toItem:", match.toItem); // Debug log
-              fetchPromises.push(getDoc(doc(db, "trades", match.toItem)));
-            } else {
-              console.log("toItem is empty or null"); // Debug log
-              fetchPromises.push(Promise.resolve(null));
-            }
-
-            const [fromItemDoc, toItemDoc] = await Promise.all(fetchPromises);
-
-            if (fromItemDoc && fromItemDoc.exists()) {
-              const fromItemData = fromItemDoc.data();
-              fromItemTitle = fromItemData?.title || "Unknown Item";
-              console.log("From item data:", fromItemData); // Debug log
-            } else {
-              fromItemTitle = "Item not selected yet";
-              console.log("From item not found or empty"); // Debug log
-            }
-
-            if (toItemDoc && toItemDoc.exists()) {
-              const toItemData = toItemDoc.data();
-              toItemTitle = toItemData?.title || "Unknown Item";
-              console.log("To item data:", toItemData); // Debug log
-            } else {
-              toItemTitle = "Unknown Item";
-              console.log("To item not found or empty"); // Debug log
-            }
-
-            console.log("Final enriched match:", {
-              fromUserName,
-              toUserName,
-              fromItemTitle,
-              toItemTitle,
-            }); // Debug log
-          } catch (error) {
-            console.error("Error fetching match details:", error);
-            // Set fallback values
-            fromUserName = "Unknown User";
-            toUserName = "Unknown User";
-            fromItemTitle = "Unknown Item";
-            toItemTitle = "Unknown Item";
-          }
-
-          return {
-            ...match,
-            fromUserName,
-            toUserName,
-            fromItemTitle,
-            toItemTitle,
-          };
-        })
-      );
-
-      console.log("Final enriched matches:", enrichedMatches); // Debug log
-      setMatches(enrichedMatches);
+    try {
+      const rows = await api.get<TradeMatch[]>(`/api/matches`);
+      setMatches(rows);
+    } catch (err) {
+      console.error("Failed to fetch matches:", err);
+    } finally {
       setMatchesLoading(false);
-    };
-    fetchMatches();
+    }
   }, [user]);
 
-  // Fetch user's passed trades
+  useEffect(() => {
+    fetchMatches();
+  }, [fetchMatches]);
+
+  // Subscribe to real-time match notifications
   useEffect(() => {
     if (!user) return;
-    const fetchPassedTrades = async () => {
-      try {
-        const passedRef = collection(db, "users", user.uid, "passes");
-        const passedSnap = await getDocs(passedRef);
-        const passedIds = new Set(passedSnap.docs.map((doc) => doc.id));
-        setPassedTrades(passedIds);
-      } catch (error) {
-        console.error("Error fetching passed trades:", error);
-      }
+    const socket = getSocket();
+    const handler = () => fetchMatches();
+    socket.on("match:new", handler);
+    return () => {
+      socket.off("match:new", handler);
     };
-    fetchPassedTrades();
-  }, [user]);
+  }, [user, fetchMatches]);
 
-  // Memoized fetch posts function to prevent rerenders
+  // Memoized fetch posts function
   const fetchPosts = useCallback(async () => {
+    if (!user) return;
     setPostsLoading(true);
-    let result: Post[] = [];
-
-    // Get all existing trade matches for the user
-    let existingMatches: TradeMatch[] = [];
-    if (user) {
-      const matchesQuery = query(
-        collection(db, "tradeMatches"),
-        where("fromUser", "==", user.uid)
-      );
-      const matchesSnap = await getDocs(matchesQuery);
-      existingMatches = matchesSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as TradeMatch[];
-    }
-
-    // Create a set of trade IDs that already have pending matches
-    const pendingTradeIds = new Set(
-      existingMatches.map((match) => match.toItem)
-    );
-
-    if (randomMode) {
-      // Fetch all trades except user's own, passed ones, and pending matches
-      const snap = await getDocs(collection(db, "trades"));
-      result = snap.docs
-        .filter((doc) => {
-          const data = doc.data();
-          return (
-            data.uid !== user?.uid &&
-            !passedTrades.has(doc.id) &&
-            !pendingTradeIds.has(doc.id)
-          );
-        })
-        .map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Post[];
-    } else if (selectedNiches.length > 0) {
-      // Firestore only allows up to 10 values in 'in' query
-      const batches = [];
-      for (let i = 0; i < selectedNiches.length; i += 10) {
-        const batch = selectedNiches.slice(i, i + 10);
-        const q = query(
-          collection(db, "trades"),
-          where("niche", "array-contains-any", batch)
-        );
-        batches.push(getDocs(q));
-      }
-      const snaps = await Promise.all(batches);
-      result = snaps.flatMap(
-        (snap) =>
-          snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as Post[]
-      );
-      // Remove duplicates, user's own posts, passed trades, and pending matches
-      const seen = new Set();
-      result = result.filter((post) => {
-        if (
-          seen.has(post.id) ||
-          post.uid === user?.uid ||
-          passedTrades.has(post.id) ||
-          pendingTradeIds.has(post.id)
-        )
-          return false;
-        seen.add(post.id);
-        return true;
+    try {
+      const params = new URLSearchParams({
+        excludeOwn: "true",
+        excludeSwiped: "true",
+        limit: "50",
       });
+      // Server filters by a single niche per call; we make multiple requests when filtering by multiple selected niches.
+      let rows: any[] = [];
+      if (randomMode || selectedNiches.length === 0) {
+        rows = await api.get<any[]>(`/api/trades?${params.toString()}`);
+      } else {
+        const batches = await Promise.all(
+          selectedNiches.map((n) =>
+            api
+              .get<any[]>(`/api/trades?${params.toString()}&niche=${encodeURIComponent(n)}`)
+              .catch(() => [])
+          )
+        );
+        const seen = new Set<string>();
+        rows = [];
+        for (const arr of batches) {
+          for (const t of arr) {
+            if (!seen.has(t.id)) {
+              seen.add(t.id);
+              rows.push(t);
+            }
+          }
+        }
+      }
+      const result: Post[] = rows.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        images: t.images ?? [],
+        niche: t.niche ? [t.niche] : [],
+        uid: t.userId,
+      }));
+      setPosts(result);
+      setCurrentIndex(0);
+      setShowResetOption(false);
+    } catch (err) {
+      console.error("Failed to fetch posts:", err);
+    } finally {
+      setPostsLoading(false);
     }
-    setPosts(result);
-    setCurrentIndex(0);
-    setShowResetOption(
-      result.length === 0 && (passedTrades.size > 0 || pendingTradeIds.size > 0)
-    );
-    setPostsLoading(false);
-  }, [selectedNiches, randomMode, user, passedTrades]);
+  }, [selectedNiches, randomMode, user]);
 
   // Memoized filter handlers to prevent rerenders
   const handleRandomModeChange = useCallback((checked: boolean) => {
@@ -359,84 +196,39 @@ export default function Trade() {
     []
   );
 
-  // Fetch posts when dependencies change - removed fetchPosts from dependency array
   useEffect(() => {
     fetchPosts();
-  }, [selectedNiches, randomMode, user, passedTrades]);
+  }, [fetchPosts]);
 
   const swipeLeft = async () => {
-    // Pass logic - add to passed trades subcollection
     const currentPost = posts[currentIndex];
     if (currentPost && user) {
       try {
-        // Add to user's passed trades subcollection
-        await setDoc(doc(db, "users", user.uid, "passes", currentPost.id), {
-          tradeId: currentPost.id,
-          timestamp: new Date(),
+        await api.post(`/api/trades/${currentPost.id}/swipe`, {
+          decision: "pass",
         });
-
-        // Update local state
         setPassedTrades((prev) => new Set([...prev, currentPost.id]));
       } catch (error) {
-        console.error("Error adding to passed trades:", error);
+        console.error("Error recording pass:", error);
       }
     }
     setCurrentIndex((prev) => Math.min(prev + 1, posts.length - 1));
   };
+  void swipeLeft;
 
   const swipeRight = async () => {
-    // Like logic - check if there's a match
     const currentPost = posts[currentIndex];
     if (currentPost && user) {
       try {
-        // Check for existing matches in both directions
-        // 1. Check if we already have a match where we are the fromUser
-        const ourExistingMatchQuery = query(
-          collection(db, "tradeMatches"),
-          where("fromUser", "==", user.uid),
-          where("toUser", "==", currentPost.uid),
-          where("toItem", "==", currentPost.id)
+        const res = await api.post<{ matched: boolean }>(
+          `/api/trades/${currentPost.id}/swipe`,
+          { decision: "like" }
         );
-
-        // 2. Check if the other user has already created a match where they are the fromUser
-        const theirExistingMatchQuery = query(
-          collection(db, "tradeMatches"),
-          where("fromUser", "==", currentPost.uid),
-          where("toUser", "==", user.uid),
-          where("toItem", "==", currentPost.id)
-        );
-
-        const [ourMatchSnap, theirMatchSnap] = await Promise.all([
-          getDocs(ourExistingMatchQuery),
-          getDocs(theirExistingMatchQuery),
-        ]);
-
-        if (!ourMatchSnap.empty) {
-          // We already have a match record, update it
-          const existingMatchDoc = ourMatchSnap.docs[0];
-          await updateDoc(doc(db, "tradeMatches", existingMatchDoc.id), {
-            fromLiked: true,
-          });
-        } else if (!theirMatchSnap.empty) {
-          // The other user has already created a match, update it
-          const existingMatchDoc = theirMatchSnap.docs[0];
-          await updateDoc(doc(db, "tradeMatches", existingMatchDoc.id), {
-            toLiked: true,
-          });
-        } else {
-          // No existing match, create a new one
-          await addDoc(collection(db, "tradeMatches"), {
-            fromUser: user.uid,
-            toUser: currentPost.uid,
-            fromItem: "", // Will be set when user selects their item
-            toItem: currentPost.id,
-            fromLiked: true,
-            toLiked: false,
-            timestamp: new Date(),
-          });
+        if (res.matched) {
+          fetchMatches();
         }
       } catch (error) {
-        console.error("Error handling swipe right:", error);
+        console.error("Error recording like:", error);
       }
     }
     setCurrentIndex((prev) => Math.min(prev + 1, posts.length - 1));
@@ -461,75 +253,28 @@ export default function Trade() {
     }
   };
 
-  const handleItemSelect = async (selectedItem: Post) => {
+  const handleItemSelect = async (_selectedItem: Post) => {
     if (!currentTradePost || !user) return;
-
     try {
-      // Check if the other user has already liked our selected item
-      // This would be a match where:
-      // - fromUser = currentPost.uid (the person who posted the item we're viewing)
-      // - toUser = user.uid (current user)
-      // - toItem = selectedItem.id (our item that they liked)
-      const existingMatchQuery = query(
-        collection(db, "tradeMatches"),
-        where("fromUser", "==", currentTradePost.uid),
-        where("toUser", "==", user.uid),
-        where("toItem", "==", selectedItem.id)
+      const res = await api.post<{ matched: boolean }>(
+        `/api/trades/${currentTradePost.id}/swipe`,
+        { decision: "like" }
       );
-
-      const existingMatchSnap = await getDocs(existingMatchQuery);
-
-      if (!existingMatchSnap.empty) {
-        // The other user has already liked our selected item!
-        // Update the existing match to include our like of their item
-        const existingMatch = existingMatchSnap.docs[0];
-        await updateDoc(doc(db, "tradeMatches", existingMatch.id), {
-          fromItem: selectedItem.id, // Add our selected item
-          toLiked: true, // Mark that we liked their item
-        });
-      } else {
-        // No existing match, create a new one
-        await addDoc(collection(db, "tradeMatches"), {
-          fromUser: user.uid,
-          toUser: currentTradePost.uid,
-          fromItem: selectedItem.id,
-          toItem: currentTradePost.id,
-          fromLiked: true,
-          toLiked: false,
-          timestamp: new Date(),
-        });
-      }
+      if (res.matched) fetchMatches();
     } catch (error) {
       console.error("Error handling item selection:", error);
     }
-
     setShowProductPicker(false);
     setCurrentTradePost(null);
-    swipeLeft();
+    setCurrentIndex((prev) => Math.min(prev + 1, posts.length - 1));
   };
 
   const handleResetPassedTrades = async () => {
-    if (!user) return;
-
-    try {
-      // Clear all passed trades from subcollection
-      const passedRef = collection(db, "users", user.uid, "passes");
-      const passedSnap = await getDocs(passedRef);
-
-      const deletePromises = passedSnap.docs.map((doc) =>
-        setDoc(doc.ref, {}, { merge: false })
-      );
-      await Promise.all(deletePromises);
-
-      // Clear local state
-      setPassedTrades(new Set());
-      setShowResetOption(false);
-
-      // Refetch posts
-      fetchPosts();
-    } catch (error) {
-      console.error("Error resetting passed trades:", error);
-    }
+    // Passes are persisted server-side as tradeSwipes; a "reset" is not currently supported.
+    // Clear local UI state and refetch.
+    setPassedTrades(new Set());
+    setShowResetOption(false);
+    fetchPosts();
   };
 
   const swipeHandlers = useSwipeable({
@@ -997,10 +742,8 @@ export default function Trade() {
                             </div>
 
                             <div className="text-xs text-neutral-500">
-                              {match.timestamp?.toDate?.()
-                                ? new Date(
-                                    match.timestamp.toDate()
-                                  ).toLocaleDateString()
+                              {match.createdAt
+                                ? new Date(match.createdAt).toLocaleDateString()
                                 : "Recently"}
                             </div>
                           </div>
