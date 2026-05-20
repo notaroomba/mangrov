@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { user } from "../db/schema.js";
@@ -74,6 +74,25 @@ export async function usersRoutes(app: FastifyInstance) {
       .where(eq(user.username, u))
       .limit(1);
     return { available: rows.length === 0 };
+  });
+
+  // Used by the login page so we can show "Sign in" vs the sign-up flow with
+  // a single email field. This does enable user-enumeration by design — that's
+  // the UX tradeoff. Rate limit if abuse becomes a problem.
+  const emailQuerySchema = z.string().email().max(254);
+  app.get("/api/users/check-email", async (req, reply) => {
+    const e = (req.query as Record<string, string>).e;
+    if (!e) return reply.code(400).send({ error: "missing email" });
+    const validation = emailQuerySchema.safeParse(e);
+    if (!validation.success) {
+      return reply.code(400).send({ error: "invalid email", exists: false });
+    }
+    const rows = await db
+      .select({ id: user.id })
+      .from(user)
+      .where(sql`lower(${user.email}) = lower(${e})`)
+      .limit(1);
+    return { exists: rows.length > 0 };
   });
 
   // Register BEFORE the /:id route so "by-username" isn't interpreted as an id.

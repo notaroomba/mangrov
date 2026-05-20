@@ -8,6 +8,7 @@ import { INTERESTS, LANGUAGES } from "../utils/constants";
 import BackButton from "./BackButton";
 import GreenSpinner from "./GreenSpinner";
 import { authClient } from "../lib/auth-client";
+import { api, ApiError } from "../lib/api";
 import { useNavigate } from "react-router";
 import { useAuth } from "../hooks/useAuth";
 import { isValidUsername } from "../utils/helpers";
@@ -90,16 +91,31 @@ export default function AuthBox() {
 
   const { user, pending } = useAuth();
 
-  const handleSignInChoice = () => {
+  const [checkingEmail, setCheckingEmail] = useState(false);
+  const handleEmailContinue = async () => {
     if (!emailValid) return setErrors("Please enter a valid email address");
-    setIsExistingUser(true);
-    setStage("verify");
-  };
-
-  const handleSignUpChoice = () => {
-    if (!emailValid) return setErrors("Please enter a valid email address");
-    setIsExistingUser(false);
-    setStage("basic");
+    setCheckingEmail(true);
+    try {
+      const { exists } = await api.get<{ exists: boolean }>(
+        `/api/users/check-email?e=${encodeURIComponent(email)}`
+      );
+      if (exists) {
+        setIsExistingUser(true);
+        setStage("verify");
+      } else {
+        setIsExistingUser(false);
+        setStage("basic");
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 400) {
+        setErrors("Please enter a valid email address");
+      } else {
+        console.error("Email check failed:", err);
+        setErrors("Couldn't reach the server. Please try again.");
+      }
+    } finally {
+      setCheckingEmail(false);
+    }
   };
 
   const handleBasicContinue = async () => {
@@ -258,18 +274,11 @@ export default function AuthBox() {
                   />
                 </div>
                 <motion.button
-                  onClick={handleSignInChoice}
+                  onClick={handleEmailContinue}
                   className={`mt-6 w-full rounded-md py-2 ${primaryBtn}`}
-                  disabled={!emailValid}
+                  disabled={!emailValid || checkingEmail}
                 >
-                  Sign in
-                </motion.button>
-                <motion.button
-                  onClick={handleSignUpChoice}
-                  className="mt-3 w-full rounded-md py-2 text-sm text-primary hover:text-primary/80 transition-colors cursor-pointer border border-primary/30 hover:bg-primary/10"
-                  disabled={!emailValid}
-                >
-                  Create new account
+                  {checkingEmail ? "Checking…" : "Continue"}
                 </motion.button>
               </motion.div>
             )}
